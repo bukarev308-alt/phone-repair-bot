@@ -13,7 +13,7 @@ app = Flask(__name__)
 DATA_FILE = "data.json"
 
 # =======================
-# Завантаження та збереження даних
+# Завантаження та збереження дани
 # =======================
 def load_data():
     if not os.path.exists(DATA_FILE):

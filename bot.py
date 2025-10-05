@@ -2,181 +2,169 @@ import telebot
 from telebot import types
 import json
 
-# === ТВОЇ НАЛАШТУВАННЯ ===
 TOKEN = "8494392250:AAFpY_MbOCw0psxn6yefA3b-s_83gGPKoLc"
 DATA_FILE = "data.json"
-
 bot = telebot.TeleBot(TOKEN)
 
-# === Завантаження даних ===
+# Завантаження даних
 try:
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
 except:
     data = {"stores": {}}
 
-# === Збереження даних ===
 def save_data():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
-# === Головне меню ===
-def main_menu():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("🏪 Магазини", "📱 Телефони")
-    markup.row("📊 Підсумки")
+# Головне меню
+def main_markup():
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🏪 Магазини", callback_data="stores"))
+    markup.add(types.InlineKeyboardButton("📱 Телефони", callback_data="phones"))
+    markup.add(types.InlineKeyboardButton("📊 Підсумки", callback_data="summary"))
     return markup
 
-# === Магазини меню ===
-def stores_menu():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+# Меню магазинів
+def stores_markup():
+    markup = types.InlineKeyboardMarkup()
     for store in data["stores"]:
-        markup.add(f"🗑️ Видалити {store}")
-    markup.row("➕ Додати магазин", "⬅️ Назад")
+        markup.add(types.InlineKeyboardButton(f"🗑️ {store}", callback_data=f"delstore|{store}"))
+    markup.add(types.InlineKeyboardButton("➕ Додати магазин", callback_data="addstore"))
+    markup.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="back"))
     return markup
 
-# === Телефони меню (список магазинів) ===
-def phones_menu():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+# Меню вибору магазинів для телефонів
+def phones_markup():
+    markup = types.InlineKeyboardMarkup()
     for store in data["stores"]:
-        markup.add(f"📂 {store}")
-    markup.row("⬅️ Назад")
+        markup.add(types.InlineKeyboardButton(f"📂 {store}", callback_data=f"store|{store}"))
+    markup.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="back"))
     return markup
 
-# === Телефони магазину (для редагування/видалення) ===
-def store_phones_menu(store_name):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    phones = data["stores"].get(store_name, [])
-    for idx, phone in enumerate(phones):
-        text = f"{phone['name']} {phone['model']} 💰 {phone['price']} грн"
-        markup.add(f"✏️ Редагувати {idx} {text}", f"🗑️ Видалити {idx} {text}")
-    markup.row("➕ Додати телефон", "⬅️ Назад")
+# Меню телефонів у магазині
+def store_phones_markup(store):
+    markup = types.InlineKeyboardMarkup()
+    for i, phone in enumerate(data["stores"][store]):
+        text = f"{phone['name']} {phone['model']} 💰{phone['price']}₴"
+        markup.add(types.InlineKeyboardButton(f"✏️ Редагувати {text}", callback_data=f"editphone|{store}|{i}"))
+        markup.add(types.InlineKeyboardButton(f"🗑️ Видалити {text}", callback_data=f"delphone|{store}|{i}"))
+    markup.add(types.InlineKeyboardButton("➕ Додати телефон", callback_data=f"addphone|{store}"))
+    markup.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="phones"))
     return markup
 
-# === Підсумки ===
+# Підсумки
 def summary_text():
     total_count = 0
     total_sum = 0
     msg = "📊 Підсумки по магазинах:\n\n"
     for store, phones in data["stores"].items():
         count = len(phones)
-        summ = sum([p["price"] for p in phones])
+        summ = sum(p['price'] for p in phones)
         total_count += count
         total_sum += summ
-        msg += f"🏪 {store}: {count} телефонів, 💰 {summ} грн\n"
-    msg += f"\n📈 Загалом: {total_count} телефонів, 💰 {total_sum} грн"
+        msg += f"🏪 {store}: {count} телефонів, 💰{summ}₴\n"
+    msg += f"\n📈 Загалом: {total_count} телефонів, 💰{total_sum}₴"
     return msg
 
-# === Обробка повідомлень ===
-@bot.message_handler(func=lambda m: True)
-def handle_message(message):
-    text = message.text
-    global last_store
+# === Хендлер команд ===
+@bot.message_handler(commands=["start"])
+def start(message):
+    bot.send_message(message.chat.id, "Вітаю! Обери дію:", reply_markup=main_markup())
 
-    if text == "/start":
-        bot.send_message(message.chat.id, "Вітаю! Обери дію:", reply_markup=main_menu())
+# === Callback Query Handler ===
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    global temp_store, temp_phone_idx
+    data_text = call.data.split("|")
     
-    # Магазини
-    elif text == "🏪 Магазини":
-        bot.send_message(message.chat.id, "Магазини:", reply_markup=stores_menu())
+    if call.data == "back":
+        bot.edit_message_text("Головне меню:", call.message.chat.id, call.message.message_id, reply_markup=main_markup())
     
-    elif text.startswith("➕ Додати магазин"):
-        msg = bot.send_message(message.chat.id, "Введи назву нового магазину:")
-        bot.register_next_step_handler(msg, add_store)
+    elif call.data == "stores":
+        bot.edit_message_text("Магазини:", call.message.chat.id, call.message.message_id, reply_markup=stores_markup())
     
-    elif text.startswith("🗑️ Видалити "):
-        store_name = text.replace("🗑️ Видалити ", "")
-        if store_name in data["stores"]:
-            del data["stores"][store_name]
+    elif call.data == "phones":
+        bot.edit_message_text("Оберіть магазин:", call.message.chat.id, call.message.message_id, reply_markup=phones_markup())
+    
+    elif call.data == "summary":
+        bot.edit_message_text(summary_text(), call.message.chat.id, call.message.message_id, reply_markup=main_markup())
+    
+    # Додати магазин
+    elif call.data == "addstore":
+        msg = bot.send_message(call.message.chat.id, "Введи назву нового магазину:")
+        bot.register_next_step_handler(msg, add_store_step)
+    
+    # Видалити магазин
+    elif data_text[0] == "delstore":
+        store = data_text[1]
+        if store in data["stores"]:
+            del data["stores"][store]
             save_data()
-            bot.send_message(message.chat.id, f"Магазин '{store_name}' видалено ✅", reply_markup=stores_menu())
-        else:
-            bot.send_message(message.chat.id, "Магазин не знайдено ❌", reply_markup=stores_menu())
-
-    # Телефони
-    elif text == "📱 Телефони":
-        bot.send_message(message.chat.id, "Оберіть магазин:", reply_markup=phones_menu())
-
-    elif text.startswith("📂 "):
-        store_name = text.replace("📂 ", "")
-        last_store = store_name
-        bot.send_message(message.chat.id, f"Телефони у {store_name}:", reply_markup=store_phones_menu(store_name))
-
-    elif text.startswith("➕ Додати телефон"):
-        msg = bot.send_message(message.chat.id, "Введи дані у форматі:\nНазва, Модель, Проблема, Ціна")
-        bot.register_next_step_handler(msg, lambda m: add_phone_step(m, last_store))
-
-    # Редагування або видалення телефону
-    elif text.startswith("✏️ Редагувати") or text.startswith("🗑️ Видалити"):
-        try:
-            parts = text.split(" ", 3)
-            action = parts[0] + " " + parts[1]
-            idx = int(parts[2])
-            store_name = last_store
-            if action == "🗑️ Видалити":
-                del data["stores"][store_name][idx]
-                save_data()
-                bot.send_message(message.chat.id, "Телефон видалено ✅", reply_markup=store_phones_menu(store_name))
-            elif action == "✏️ Редагувати":
-                phone = data["stores"][store_name][idx]
-                msg = bot.send_message(message.chat.id, f"Редагуй телефон у форматі:\nНазва, Модель, Проблема, Ціна\nПоточні: {phone}")
-                bot.register_next_step_handler(msg, lambda m: edit_phone_step(m, store_name, idx))
-        except:
-            bot.send_message(message.chat.id, "Помилка ❌", reply_markup=phones_menu())
-
-    # Підсумки
-    elif text == "📊 Підсумки":
-        bot.send_message(message.chat.id, summary_text(), reply_markup=main_menu())
+            bot.edit_message_text(f"Магазин '{store}' видалено ✅", call.message.chat.id, call.message.message_id, reply_markup=stores_markup())
     
-    # Назад
-    elif text == "⬅️ Назад":
-        bot.send_message(message.chat.id, "Повернувся в головне меню:", reply_markup=main_menu())
+    # Вибір магазину для перегляду телефонів
+    elif data_text[0] == "store":
+        store = data_text[1]
+        temp_store = store
+        bot.edit_message_text(f"Телефони у {store}:", call.message.chat.id, call.message.message_id, reply_markup=store_phones_markup(store))
     
-    else:
-        bot.send_message(message.chat.id, "Невідома команда ❌", reply_markup=main_menu())
-
-# === Додавання магазину ===
-def add_store(message):
-    store_name = message.text.strip()
-    if store_name and store_name not in data["stores"]:
-        data["stores"][store_name] = []
+    # Додати телефон
+    elif data_text[0] == "addphone":
+        store = data_text[1]
+        temp_store = store
+        msg = bot.send_message(call.message.chat.id, "Введи дані телефону у форматі:\nНазва, Модель, Проблема, Ціна")
+        bot.register_next_step_handler(msg, add_phone_step)
+    
+    # Видалити телефон
+    elif data_text[0] == "delphone":
+        store = data_text[1]
+        idx = int(data_text[2])
+        del data["stores"][store][idx]
         save_data()
-        bot.send_message(message.chat.id, f"Магазин '{store_name}' додано ✅", reply_markup=stores_menu())
-    else:
-        bot.send_message(message.chat.id, "Магазин вже існує або пустий ❌", reply_markup=stores_menu())
+        bot.edit_message_text(f"Телефон видалено ✅", call.message.chat.id, call.message.message_id, reply_markup=store_phones_markup(store))
+    
+    # Редагувати телефон
+    elif data_text[0] == "editphone":
+        store = data_text[1]
+        idx = int(data_text[2])
+        temp_store = store
+        temp_phone_idx = idx
+        phone = data["stores"][store][idx]
+        msg = bot.send_message(call.message.chat.id, f"Редагуй телефон у форматі:\nНазва, Модель, Проблема, Ціна\nПоточні: {phone}")
+        bot.register_next_step_handler(msg, edit_phone_step)
 
-# === Додавання телефону ===
-def add_phone_step(message, store_name):
+# === Функції додавання/редагування ===
+def add_store_step(message):
+    name = message.text.strip()
+    if name and name not in data["stores"]:
+        data["stores"][name] = []
+        save_data()
+        bot.send_message(message.chat.id, f"Магазин '{name}' додано ✅", reply_markup=stores_markup())
+    else:
+        bot.send_message(message.chat.id, "Магазин вже існує або пустий ❌", reply_markup=stores_markup())
+
+def add_phone_step(message):
     try:
         name, model, problem, price = [x.strip() for x in message.text.split(",")]
         price = int(price)
-        data["stores"][store_name].append({
-            "name": name,
-            "model": model,
-            "problem": problem,
-            "price": price
-        })
+        data["stores"][temp_store].append({"name": name, "model": model, "problem": problem, "price": price})
         save_data()
-        bot.send_message(message.chat.id, "Телефон додано ✅", reply_markup=store_phones_menu(store_name))
+        bot.send_message(message.chat.id, "Телефон додано ✅", reply_markup=store_phones_markup(temp_store))
     except:
-        bot.send_message(message.chat.id, "Помилка формату ❌", reply_markup=store_phones_menu(store_name))
+        bot.send_message(message.chat.id, "Помилка формату ❌", reply_markup=store_phones_markup(temp_store))
 
-# === Редагування телефону ===
-def edit_phone_step(message, store_name, idx):
+def edit_phone_step(message):
     try:
         name, model, problem, price = [x.strip() for x in message.text.split(",")]
         price = int(price)
-        data["stores"][store_name][idx] = {
-            "name": name,
-            "model": model,
-            "problem": problem,
-            "price": price
-        }
+        data["stores"][temp_store][temp_phone_idx] = {"name": name, "model": model, "problem": problem, "price": price}
         save_data()
-        bot.send_message(message.chat.id, "Телефон відредаговано ✅", reply_markup=store_phones_menu(store_name))
+        bot.send_message(message.chat.id, "Телефон відредаговано ✅", reply_markup=store_phones_markup(temp_store))
     except:
-        bot.send_message(message.chat.id, "Помилка формату ❌", reply_markup=store_phones_menu(store_name))
+        bot.send_message(message.chat.id, "Помилка формату ❌", reply_markup=store_phones_markup(temp_store))
 
-# === Запуск бота ===
-last_store = ""
+# Запуск
+temp_store = ""
+temp_phone_idx = 0
 bot.infinity_polling()

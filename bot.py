@@ -4,7 +4,7 @@ import json
 
 # === ТВОЇ НАЛАШТУВАННЯ ===
 TOKEN = "8494392250:AAFpY_MbOCw0psxn6yefA3b-s_83gGPKoLc"
-ALLOWED_USER_ID = 123456789  # <- твій Telegram ID
+ALLOWED_USER_ID = andrew01_10  # <- твій Telegram ID
 DATA_FILE = "data.json"
 
 bot = telebot.TeleBot(TOKEN)

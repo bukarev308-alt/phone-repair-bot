@@ -128,6 +128,16 @@ def add_phone_start(message):
     bot.send_message(chat_id, "Оберіть магазин:", reply_markup=stores_menu())
 
 # =======================
+# ФУНКЦІЯ ДЛЯ ВІДОБРАЖЕННЯ ВИБОРУ ТЕЛЕФОНУ ДЛЯ РЕДАГУВАННЯ
+# =======================
+def show_edit_selection(chat_id):
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    for i, p in enumerate(data["phones"], 1):
+        kb.add(f"{i}. {p['model']} ({p['store']})")
+    kb.add("⬅️ Назад")
+    bot.send_message(chat_id, "Оберіть телефон для редагування або видалення:", reply_markup=kb)
+
+# =======================
 # ГЕНЕРИЧНИЙ ОБРОБНИК
 # =======================
 @bot.message_handler(func=lambda m: True)
@@ -135,6 +145,8 @@ def generic_handler(message):
     chat_id = message.chat.id
     txt = message.text
     state = current_state(chat_id)
+
+    print(f"[LOG] Повідомлення від {chat_id}: {txt}, стан: {state}")
 
     # -----------------------
     # Назад
@@ -201,9 +213,9 @@ def generic_handler(message):
         show_edit_selection(chat_id)
         return
 
-    # -----------------------
-    # СТАНИ ДОДАВАННЯ ТЕЛЕФОНУ
-    # -----------------------
+    # =======================
+    # ДОДАВАННЯ ТЕЛЕФОНУ
+    # =======================
     if state == "add_store":
         if txt == "➕ Додати магазин":
             push_state(chat_id, "add_new_store")
@@ -221,4 +233,51 @@ def generic_handler(message):
         if store_name and store_name not in data["stores"]:
             data["stores"].append(store_name)
             save_data(data)
-           
+            bot.send_message(chat_id, f"✅ Магазин «{store_name}» додано!", reply_markup=main_menu())
+            clear_state(chat_id)
+        else:
+            bot.send_message(chat_id, "❌ Магазин вже існує або назва пуста.", reply_markup=back_button())
+        pop_state(chat_id)
+        return
+
+    if state == "add_model":
+        user_state[chat_id]["tmp"]["model"] = txt
+        push_state(chat_id, "add_problem")
+        bot.send_message(chat_id, "Опишіть проблему телефону:", reply_markup=back_button())
+        return
+
+    if state == "add_problem":
+        user_state[chat_id]["tmp"]["problem"] = txt
+        push_state(chat_id, "add_price")
+        bot.send_message(chat_id, "Вкажіть ціну ремонту:", reply_markup=back_button())
+        return
+
+    if state == "add_price":
+        try:
+            price = float(txt)
+            user_state[chat_id]["tmp"]["price"] = price
+            phone = {
+                "store": user_state[chat_id]["tmp"]["store"],
+                "model": user_state[chat_id]["tmp"]["model"],
+                "problem": user_state[chat_id]["tmp"]["problem"],
+                "price": price,
+                "date": datetime.now().strftime("%d.%m.%Y %H:%M")
+            }
+            data["phones"].append(phone)
+            save_data(data)
+            bot.send_message(chat_id, "✅ Телефон додано!", reply_markup=main_menu())
+            clear_state(chat_id)
+        except ValueError:
+            bot.send_message(chat_id, "❌ Введіть правильне число.", reply_markup=back_button())
+        return
+
+    # =======================
+    # РЕДАГУВАННЯ / ВИДАЛЕННЯ
+    # =======================
+    if state == "edit_select":
+        try:
+            idx = int(txt.split(".")[0]) - 1
+            if 0 <= idx < len(data["phones"]):
+                user_state[chat_id]["tmp"]["edit_idx"] = idx
+                push_state(chat_id, "edit_action")
+               

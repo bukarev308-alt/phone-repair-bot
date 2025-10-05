@@ -2,7 +2,7 @@ import os
 import sqlite3
 from telebot import TeleBot, types
 
-TOKEN = os.environ.get("BOT_TOKEN")
+TOKEN = "8494392250:AAFpY_MbOCw0psxn6yefA3b-s_83gGPKoLc"
 bot = TeleBot(TOKEN)
 
 STORES = ["It Center", "Леся", "Особисті"]

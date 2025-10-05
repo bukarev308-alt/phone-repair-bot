@@ -134,7 +134,44 @@ def generic_handler(message):
     state = current_state(chat_id)
 
     # -----------------------
-    # Назад
+    # КНОПКИ ГОЛОВНОГО МЕНЮ (завжди)
+    # -----------------------
+    if txt == "📋 Переглянути телефони":
+        if not data["phones"]:
+            bot.send_message(chat_id, "📭 Телефонів немає.", reply_markup=main_menu())
+            return
+        text = "📋 <b>Список телефонів:</b>\n\n"
+        for i, p in enumerate(data["phones"], 1):
+            text += (f"{i}. {p['model']} ({p['store']})\n"
+                     f"🔧 {p['problem']}\n"
+                     f"💰 {p['price']} грн\n"
+                     f"🕒 {p['date']}\n\n")
+        bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=main_menu())
+        return
+
+    elif txt == "📊 Підсумок":
+        if not data["phones"]:
+            bot.send_message(chat_id, "📭 Телефонів немає.", reply_markup=main_menu())
+            return
+        total = sum(p["price"] for p in data["phones"])
+        count = len(data["phones"])
+        # Підсумок по магазинах
+        stores_summary = {}
+        for p in data["phones"]:
+            stores_summary[p["store"]] = stores_summary.get(p["store"], 0) + p["price"]
+        store_text = "\n".join(f"• {s}: {v} грн" for s, v in stores_summary.items())
+        bot.send_message(chat_id,
+                         f"📊 Підсумок:\n🔢 Кількість телефонів: {count}\n💰 Загальна сума: {total} грн\n\n<b>По магазинах:</b>\n{store_text}",
+                         parse_mode="HTML", reply_markup=main_menu())
+        return
+
+    elif txt == "🏪 Магазини":
+        text = "🏪 <b>Список магазинів:</b>\n" + "\n".join(f"• {s}" for s in data["stores"])
+        bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=main_menu())
+        return
+
+    # -----------------------
+    # НАЗАД
     # -----------------------
     if txt == "⬅️ Назад":
         pop_state(chat_id)
@@ -204,7 +241,7 @@ def generic_handler(message):
         return
 
     # =======================
-    # РЕДАГУВАННЯ ТЕЛЕФОНУ
+    # РЕДАГУВАННЯ / ВИДАЛЕННЯ
     # =======================
     if state == "edit_select":
         try:
@@ -268,6 +305,6 @@ def generic_handler(message):
         return
 
 # =======================
-# ЗАПУСК
+# СТАРТ БОТА
 # =======================
 bot.infinity_polling()

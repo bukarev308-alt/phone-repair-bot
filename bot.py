@@ -134,7 +134,7 @@ def generic_handler(message):
     state = current_state(chat_id)
 
     # -----------------------
-    # КНОПКИ ГОЛОВНОГО МЕНЮ (завжди)
+    # КНОПКИ ГОЛОВНОГО МЕНЮ
     # -----------------------
     if txt == "📋 Переглянути телефони":
         if not data["phones"]:
@@ -155,7 +155,6 @@ def generic_handler(message):
             return
         total = sum(p["price"] for p in data["phones"])
         count = len(data["phones"])
-        # Підсумок по магазинах
         stores_summary = {}
         for p in data["phones"]:
             stores_summary[p["store"]] = stores_summary.get(p["store"], 0) + p["price"]
@@ -243,6 +242,8 @@ def generic_handler(message):
     # =======================
     # РЕДАГУВАННЯ / ВИДАЛЕННЯ
     # =======================
+    field_map = {"Магазин": "store", "Модель": "model", "Проблема": "problem", "Ціна": "price"}
+
     if state == "edit_select":
         try:
             idx = int(txt.split(".")[0]) - 1
@@ -286,7 +287,7 @@ def generic_handler(message):
         elif field == "Магазин":
             if value not in data["stores"]:
                 data["stores"].append(value)
-        key = field.lower()
+        key = field_map[field]
         data["phones"][idx][key] = value
         save_data(data)
         bot.send_message(chat_id, f"✅ {field} оновлено!", reply_markup=main_menu())

@@ -271,13 +271,7 @@ def generic_handler(message):
             bot.send_message(chat_id, "❌ Введіть правильне число.", reply_markup=back_button())
         return
 
-    # =======================
-    # РЕДАГУВАННЯ / ВИДАЛЕННЯ
-    # =======================
-    if state == "edit_select":
-        try:
-            idx = int(txt.split(".")[0]) - 1
-            if 0 <= idx < len(data["phones"]):
-                user_state[chat_id]["tmp"]["edit_idx"] = idx
-                push_state(chat_id, "edit_action")
-               
+# =======================
+# ЗАПУСК БОТА
+# =======================
+bot.infinity_polling()

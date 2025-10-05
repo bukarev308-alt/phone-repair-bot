@@ -4,7 +4,6 @@ import json
 
 # === ТВОЇ НАЛАШТУВАННЯ ===
 TOKEN = "8494392250:AAFpY_MbOCw0psxn6yefA3b-s_83gGPKoLc"
-ALLOWED_USER_ID = andrew01_10  # <- твій Telegram ID
 DATA_FILE = "data.json"
 
 bot = telebot.TeleBot(TOKEN)
@@ -20,10 +19,6 @@ except:
 def save_data():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
-
-# === Перевірка користувача ===
-def is_allowed(message):
-    return message.from_user.id == ALLOWED_USER_ID
 
 # === Головне меню ===
 def main_menu():
@@ -54,7 +49,7 @@ def store_phones_menu(store_name):
     phones = data["stores"].get(store_name, [])
     for idx, phone in enumerate(phones):
         text = f"{phone['name']} {phone['model']} 💰 {phone['price']} грн"
-        markup.add(f"✏️ {idx} {text}", f"🗑️ {idx} {text}")
+        markup.add(f"✏️ Редагувати {idx} {text}", f"🗑️ Видалити {idx} {text}")
     markup.row("➕ Додати телефон", "⬅️ Назад")
     return markup
 
@@ -62,7 +57,7 @@ def store_phones_menu(store_name):
 def summary_text():
     total_count = 0
     total_sum = 0
-    msg = ""
+    msg = "📊 Підсумки по магазинах:\n\n"
     for store, phones in data["stores"].items():
         count = len(phones)
         summ = sum([p["price"] for p in phones])
@@ -75,13 +70,11 @@ def summary_text():
 # === Обробка повідомлень ===
 @bot.message_handler(func=lambda m: True)
 def handle_message(message):
-    if not is_allowed(message):
-        return
-
     text = message.text
+    global last_store
 
     if text == "/start":
-        bot.send_message(message.chat.id, "Вибери дію:", reply_markup=main_menu())
+        bot.send_message(message.chat.id, "Вітаю! Обери дію:", reply_markup=main_menu())
     
     # Магазини
     elif text == "🏪 Магазини":
@@ -106,28 +99,29 @@ def handle_message(message):
 
     elif text.startswith("📂 "):
         store_name = text.replace("📂 ", "")
+        last_store = store_name
         bot.send_message(message.chat.id, f"Телефони у {store_name}:", reply_markup=store_phones_menu(store_name))
 
     elif text.startswith("➕ Додати телефон"):
-        bot.send_message(message.chat.id, "Введи дані у форматі:\nНазва, Модель, Проблема, Ціна")
-        bot.register_next_step_handler(message, lambda m: add_phone_step(m, last_store))
+        msg = bot.send_message(message.chat.id, "Введи дані у форматі:\nНазва, Модель, Проблема, Ціна")
+        bot.register_next_step_handler(msg, lambda m: add_phone_step(m, last_store))
 
     # Редагування або видалення телефону
-    elif text.startswith("✏️") or text.startswith("🗑️"):
+    elif text.startswith("✏️ Редагувати") or text.startswith("🗑️ Видалити"):
         try:
-            parts = text.split(" ", 2)
-            action = parts[0]
-            idx = int(parts[1])
-            store_name = last_store  # останній вибраний магазин
-            if action == "🗑️":
+            parts = text.split(" ", 3)
+            action = parts[0] + " " + parts[1]
+            idx = int(parts[2])
+            store_name = last_store
+            if action == "🗑️ Видалити":
                 del data["stores"][store_name][idx]
                 save_data()
                 bot.send_message(message.chat.id, "Телефон видалено ✅", reply_markup=store_phones_menu(store_name))
-            elif action == "✏️":
+            elif action == "✏️ Редагувати":
                 phone = data["stores"][store_name][idx]
                 msg = bot.send_message(message.chat.id, f"Редагуй телефон у форматі:\nНазва, Модель, Проблема, Ціна\nПоточні: {phone}")
                 bot.register_next_step_handler(msg, lambda m: edit_phone_step(m, store_name, idx))
-        except Exception as e:
+        except:
             bot.send_message(message.chat.id, "Помилка ❌", reply_markup=phones_menu())
 
     # Підсумки
@@ -184,5 +178,5 @@ def edit_phone_step(message, store_name, idx):
         bot.send_message(message.chat.id, "Помилка формату ❌", reply_markup=store_phones_menu(store_name))
 
 # === Запуск бота ===
-last_store = ""  # для запам’ятовування останнього вибраного магазину
+last_store = ""
 bot.infinity_polling()

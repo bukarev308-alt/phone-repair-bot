@@ -110,13 +110,84 @@ def cmd_start(message):
     bot.send_message(chat_id, "Привіт! 👋\nОберіть дію:", reply_markup=main_menu())
 
 # =======================
-# ОБРОБКА МАГАЗИНІВ
+# МАГАЗИНИ: ДОДАТИ / РЕДАГУВАТИ / ВИДАЛИТИ
 # =======================
 @bot.message_handler(func=lambda m: m.text == "🏪 Магазини")
 def handle_stores(message):
     chat_id = message.chat.id
-    text = "🏪 <b>Список магазинів:</b>\n" + "\n".join(f"• {s}" for s in data["stores"])
-    bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=main_menu())
+    text = "🏪 <b>Список магазинів:</b>\n" + "\n".join(f"{i+1}. {s}" for i, s in enumerate(data["stores"]))
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    for i, s in enumerate(data["stores"], 1):
+        kb.add(f"✏️ {i}. {s}", f"🗑 {i}. {s}")
+    kb.add("➕ Додати магазин")
+    kb.add("⬅️ Назад")
+    push_state(chat_id, "store_menu")
+    bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=kb)
+
+@bot.message_handler(func=lambda m: current_state(m.chat.id) == "store_menu")
+def store_menu_handler(message):
+    chat_id = message.chat.id
+    txt = message.text
+
+    if txt == "⬅️ Назад":
+        pop_state(chat_id)
+        bot.send_message(chat_id, "Повертаємося в головне меню.", reply_markup=main_menu())
+        return
+
+    if txt == "➕ Додати магазин":
+        push_state(chat_id, "add_new_store")
+        bot.send_message(chat_id, "Введіть назву нового магазину:", reply_markup=back_button())
+        return
+
+    if txt.startswith("✏️"):
+        try:
+            idx = int(txt.split()[1].replace(".", "")) - 1
+            user_state[chat_id]["tmp"]["edit_store_idx"] = idx
+            push_state(chat_id, "edit_store_name")
+            bot.send_message(chat_id, f"Введіть нову назву магазину «{data['stores'][idx]}»:", reply_markup=back_button())
+        except:
+            bot.send_message(chat_id, "❌ Невірний вибір.", reply_markup=back_button())
+        return
+
+    if txt.startswith("🗑"):
+        try:
+            idx = int(txt.split()[1].replace(".", "")) - 1
+            store_name = data["stores"][idx]
+            user_state[chat_id]["tmp"]["delete_store_idx"] = idx
+            push_state(chat_id, "confirm_delete_store")
+            bot.send_message(chat_id, f"Видалити магазин «{store_name}»?", reply_markup=confirm_delete_menu())
+        except:
+            bot.send_message(chat_id, "❌ Невірний вибір.", reply_markup=back_button())
+        return
+
+@bot.message_handler(func=lambda m: current_state(m.chat.id) == "edit_store_name")
+def edit_store_name_handler(message):
+    chat_id = message.chat.id
+    new_name = message.text.strip()
+    idx = user_state[chat_id]["tmp"]["edit_store_idx"]
+
+    if new_name and new_name not in data["stores"]:
+        old_name = data["stores"][idx]
+        data["stores"][idx] = new_name
+        save_data(data)
+        bot.send_message(chat_id, f"✅ Магазин «{old_name}» перейменовано на «{new_name}».", reply_markup=main_menu())
+        clear_state(chat_id)
+    else:
+        bot.send_message(chat_id, "❌ Назва пуста або вже існує.", reply_markup=back_button())
+
+@bot.message_handler(func=lambda m: current_state(m.chat.id) == "confirm_delete_store")
+def delete_store_handler(message):
+    chat_id = message.chat.id
+    txt = message.text
+    idx = user_state[chat_id]["tmp"]["delete_store_idx"]
+
+    if txt == "✅ Так":
+        store_name = data["stores"].pop(idx)
+        save_data(data)
+        bot.send_message(chat_id, f"🗑 Магазин «{store_name}» видалено.", reply_markup=main_menu())
+    else:
+        bot.send_message(chat_id, "❌ Скасовано.", reply_markup=main_menu())
+    clear_state(chat_id)
 
 # =======================
 # ДОДАВАННЯ ТЕЛЕФОНУ
@@ -127,9 +198,6 @@ def add_phone_start(message):
     push_state(chat_id, "add_store")
     bot.send_message(chat_id, "Оберіть магазин:", reply_markup=stores_menu())
 
-# =======================
-# ФУНКЦІЯ ДЛЯ ВІДОБРАЖЕННЯ ВИБОРУ ТЕЛЕФОНУ ДЛЯ РЕДАГУВАННЯ
-# =======================
 def show_edit_selection(chat_id):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     for i, p in enumerate(data["phones"], 1):
@@ -146,11 +214,6 @@ def generic_handler(message):
     txt = message.text
     state = current_state(chat_id)
 
-    print(f"[LOG] Повідомлення від {chat_id}: {txt}, стан: {state}")
-
-    # -----------------------
-    # Назад
-    # -----------------------
     if txt == "⬅️ Назад":
         pop_state(chat_id)
         state = current_state(chat_id)
@@ -158,7 +221,7 @@ def generic_handler(message):
             bot.send_message(chat_id, "Повертаємося в головне меню.", reply_markup=main_menu())
         elif state == "add_store":
             bot.send_message(chat_id, "Оберіть магазин:", reply_markup=stores_menu())
-        elif state.startswith("edit"):
+        elif state and state.startswith("edit"):
             show_edit_selection(chat_id)
         return
 
@@ -182,12 +245,10 @@ def generic_handler(message):
         if not data["phones"]:
             bot.send_message(chat_id, "📭 Телефонів немає.", reply_markup=main_menu())
             return
-
         text = "📊 <b>Підсумок по магазинах:</b>\n\n"
         store_summary = {}
         total_count = 0
         total_sum = 0
-
         for p in data["phones"]:
             store = p["store"]
             price = p["price"]
@@ -197,10 +258,8 @@ def generic_handler(message):
             store_summary[store]["sum"] += price
             total_count += 1
             total_sum += price
-
         for store, info in store_summary.items():
             text += f"🏪 {store}:\n🔢 Телефонів: {info['count']}\n💰 Сума: {info['sum']} грн\n\n"
-
         text += f"💼 <b>Загалом:</b>\n🔢 Телефонів: {total_count}\n💰 Сума: {total_sum} грн"
         bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=main_menu())
         return
@@ -213,9 +272,9 @@ def generic_handler(message):
         show_edit_selection(chat_id)
         return
 
-    # =======================
+    # -----------------------
     # ДОДАВАННЯ ТЕЛЕФОНУ
-    # =======================
+    # -----------------------
     if state == "add_store":
         if txt == "➕ Додати магазин":
             push_state(chat_id, "add_new_store")

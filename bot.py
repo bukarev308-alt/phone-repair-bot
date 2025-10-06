@@ -6,7 +6,7 @@ from telebot import TeleBot, types
 # =======================
 # ІНІЦІАЛІЗАЦІЯ БОТА
 # =======================
-TOKEN = os.getenv("BOT_TOKEN") or "YOUR_BOT_TOKEN_HERE"
+TOKEN = os.getenv("BOT_TOKEN") or "8494392250:AAFpY_MbOCw0psxn6yefA3b-s_83gGPKoLc"
 TOKEN = TOKEN.strip()
 if ":" not in TOKEN:
     raise ValueError("❌ Невірний токен! Токен повинен містити двокрапку (:).")

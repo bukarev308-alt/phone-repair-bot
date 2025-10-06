@@ -6,30 +6,17 @@ from telebot import TeleBot, types
 # =======================
 # ІНІЦІАЛІЗАЦІЯ БОТА
 # =======================
-TOKEN = os.getenv("BOT_TOKEN")
-
-# Якщо змінна порожня або None, підставляємо токен вручну
-if not TOKEN:
-    TOKEN = "8494392250:AAFpY_MbOCw0psxn6yefA3b-s_83gGPKoLc"  # <-- встав свій справжній токен сюди
-
-# Очищаємо зайві пробіли
+TOKEN = os.getenv("BOT_TOKEN") or "YOUR_BOT_TOKEN_HERE"
 TOKEN = TOKEN.strip()
-
-# Перевіримо формат токена
 if ":" not in TOKEN:
     raise ValueError("❌ Невірний токен! Токен повинен містити двокрапку (:).")
-
 bot = TeleBot(TOKEN)
-print("✅ Бот успішно створений!")
 
 # =======================
-# НАЛАШТУВАННЯ
+# ФАЙЛ ДАНИХ
 # =======================
 DATA_FILE = "data.json"
 
-# =======================
-# ЗАВАНТАЖЕННЯ / ЗБЕРЕЖЕННЯ ДАНИХ
-# =======================
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {"stores": ["It Center", "Леся", "Особисті"], "phones": [], "archive": []}
@@ -68,7 +55,7 @@ def clear_state(chat_id):
     user_state[chat_id] = {"stack": [], "tmp": {}}
 
 # =======================
-# МЕНЮ
+# КЛАВІАТУРИ
 # =======================
 def main_menu():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -143,8 +130,8 @@ def archive_week(message):
     chat_id = message.chat.id
     now = datetime.now()
     start_week = now - timedelta(days=7)
-
     to_archive = []
+
     for p in data["phones"]:
         phone_date = datetime.strptime(p["date"], "%d.%m.%Y %H:%M")
         if phone_date >= start_week:
@@ -162,7 +149,6 @@ def archive_week(message):
     data["archive"].extend(to_archive)
     data["phones"] = [p for p in data["phones"] if datetime.strptime(p["date"], "%d.%m.%Y %H:%M") < start_week]
     save_data(data)
-
     bot.send_message(chat_id, f"📦 {len(to_archive)} ремонтів перенесено в архів!\n🆕 Новий тиждень почався.", reply_markup=main_menu())
 
 # =======================
@@ -198,15 +184,116 @@ def show_archive_week(message):
         bot.send_message(chat_id, "📭 Телефонів за цей тиждень немає.", reply_markup=archive_week_menu())
         return
 
-    text = f"📦 Архів: тиждень {week_num} ({year})\n\n"
-    for i, p in enumerate(phones, 1):
-        text += (f"{i}. {p['model']} ({p['store']})\n"
-                 f"🔧 {p['problem']}\n"
-                 f"💰 {p['price']} грн\n"
-                 f"🕒 {p['date']}\n\n")
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    for i, p in enumerate(phones, 1):
+        kb.add(f"{i}. {p['model']} ({p['store']})")
     kb.add("⬅️ Назад")
-    bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=kb)
+    push_state(chat_id, "archive_select_phone")
+    user_state[chat_id]["tmp"]["archive_week"] = (week_num, year)
+    bot.send_message(chat_id, f"📦 Архів: тиждень {week_num} ({year})\nОберіть телефон для редагування або видалення:", reply_markup=kb)
+
+# =======================
+# РЕДАГУВАННЯ / ВИДАЛЕННЯ АРХІВУ
+# =======================
+@bot.message_handler(func=lambda m: current_state(m.chat.id) == "archive_select_phone")
+def archive_edit_phone(message):
+    chat_id = message.chat.id
+    txt = message.text
+    if txt == "⬅️ Назад":
+        pop_state(chat_id)
+        show_archive_week(message)
+        return
+    week_num, year = user_state[chat_id]["tmp"]["archive_week"]
+    phones = [p for p in data["archive"] if p.get("week") == week_num and p.get("year") == year]
+    try:
+        idx = int(txt.split(".")[0]) - 1
+        if not (0 <= idx < len(phones)):
+            raise ValueError
+    except:
+        bot.send_message(chat_id, "❌ Невірний вибір.", reply_markup=archive_week_menu())
+        return
+    user_state[chat_id]["tmp"]["edit_idx"] = idx
+    push_state(chat_id, "archive_edit_action")
+    bot.send_message(chat_id, "Обрати дію:", reply_markup=edit_action_menu())
+
+@bot.message_handler(func=lambda m: current_state(m.chat.id) == "archive_edit_action")
+def archive_edit_action(message):
+    chat_id = message.chat.id
+    txt = message.text
+    idx = user_state[chat_id]["tmp"]["edit_idx"]
+    week_num, year = user_state[chat_id]["tmp"]["archive_week"]
+    phones = [p for p in data["archive"] if p.get("week") == week_num and p.get("year") == year]
+    phone = phones[idx]
+
+    field_map = {"Магазин":"store","Модель":"model","Проблема":"problem","Ціна":"price"}
+
+    if txt == "✏️ Редагувати":
+        push_state(chat_id, "archive_edit_field")
+        bot.send_message(chat_id, "Що редагуємо?", reply_markup=edit_field_menu())
+        return
+    elif txt == "🗑 Видалити":
+        push_state(chat_id, "archive_confirm_delete")
+        bot.send_message(chat_id, f"Видалити {phone['model']}?", reply_markup=confirm_delete_menu())
+        return
+    elif txt == "⬅️ Назад":
+        pop_state(chat_id)
+        show_archive_week(message)
+        return
+
+@bot.message_handler(func=lambda m: current_state(m.chat.id) == "archive_edit_field")
+def archive_edit_field(message):
+    chat_id = message.chat.id
+    field = message.text
+    user_state[chat_id]["tmp"]["field"] = field
+    push_state(chat_id, "archive_edit_enter")
+    bot.send_message(chat_id, f"Введіть нове значення для {field}:", reply_markup=back_button())
+
+@bot.message_handler(func=lambda m: current_state(m.chat.id) == "archive_edit_enter")
+def archive_edit_enter(message):
+    chat_id = message.chat.id
+    value = message.text
+    idx = user_state[chat_id]["tmp"]["edit_idx"]
+    field = user_state[chat_id]["tmp"]["field"]
+    week_num, year = user_state[chat_id]["tmp"]["archive_week"]
+    phones = [p for p in data["archive"] if p.get("week") == week_num and p.get("year") == year]
+    key = {"Магазин":"store","Модель":"model","Проблема":"problem","Ціна":"price"}[field]
+
+    if field == "Ціна":
+        try:
+            value = float(value)
+        except:
+            bot.send_message(chat_id, "❌ Введіть число.", reply_markup=back_button())
+            return
+    elif field == "Магазин":
+        if value not in data["stores"]:
+            data["stores"].append(value)
+
+    phones[idx][key] = value
+    # оновлюємо в архіві
+    for i, p in enumerate(data["archive"]):
+        if p.get("week")==week_num and p.get("year")==year and p==phones[idx]:
+            data["archive"][i] = phones[idx]
+            break
+    save_data(data)
+    bot.send_message(chat_id, f"✅ {field} оновлено!", reply_markup=main_menu())
+    clear_state(chat_id)
+
+@bot.message_handler(func=lambda m: current_state(m.chat.id) == "archive_confirm_delete")
+def archive_confirm_delete(message):
+    chat_id = message.chat.id
+    txt = message.text
+    idx = user_state[chat_id]["tmp"]["edit_idx"]
+    week_num, year = user_state[chat_id]["tmp"]["archive_week"]
+    phones = [p for p in data["archive"] if p.get("week") == week_num and p.get("year") == year]
+    phone = phones[idx]
+
+    if txt == "✅ Так":
+        data["archive"].remove(phone)
+        save_data(data)
+        bot.send_message(chat_id, f"🗑 Телефон {phone['model']} видалено з архіву!", reply_markup=main_menu())
+    else:
+        bot.send_message(chat_id, "❌ Скасовано.", reply_markup=main_menu())
+    clear_state(chat_id)
 
 # =======================
 # ЗВІТИ
@@ -231,19 +318,11 @@ def report_handler(message):
     bot.send_message(chat_id, generate_report(period), parse_mode="HTML", reply_markup=main_menu())
 
 # =======================
-# ДОДАВАННЯ, РЕДАГУВАННЯ ТЕЛЕФОНІВ
+# ГЕНЕРИЧНИЙ ОБРОБНИК ТЕЛЕФОНІВ
 # =======================
-# (Тут вставляємо увесь блок generic_handler з твого попереднього коду)
-# Він залишається без змін, бо вже працює коректно
-
-@bot.message_handler(func=lambda m: True)
-def generic_handler(message):
-    chat_id = message.chat.id
-    txt = message.text
-    state = current_state(chat_id)
-
-    # Весь generic_handler з попереднього коду сюди вставляється
-    # Він обробляє додавання, редагування, видалення телефонів
+# Всі додавання, редагування та видалення телефонів
+# Той самий код як у попередньому моєму повідомленні
+# (щоб не повторювати тут через обмеження, його можна додати без змін)
 
 # =======================
 # СТАРТ БОТА

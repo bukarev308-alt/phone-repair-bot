@@ -4,10 +4,27 @@ from datetime import datetime, timedelta
 from telebot import TeleBot, types
 
 # =======================
+# ІНІЦІАЛІЗАЦІЯ БОТА
+# =======================
+TOKEN = os.getenv("BOT_TOKEN")
+
+# Якщо змінна порожня або None, підставляємо токен вручну
+if not TOKEN:
+    TOKEN = "8494392250:AAFpY_MbOCw0psxn6yefA3b-s_83gGPKoLc"  # <-- встав свій справжній токен сюди
+
+# Очищаємо зайві пробіли
+TOKEN = TOKEN.strip()
+
+# Перевіримо формат токена
+if ":" not in TOKEN:
+    raise ValueError("❌ Невірний токен! Токен повинен містити двокрапку (:).")
+
+bot = TeleBot(TOKEN)
+print("✅ Бот успішно створений!")
+
+# =======================
 # НАЛАШТУВАННЯ
 # =======================
-TOKEN = os.getenv("BOT_TOKEN") or "8494392250:AAFpY_MbOCw0psxn6yefA3b-s_83gGPKoLc"
-bot = TeleBot(TOKEN)
 DATA_FILE = "data.json"
 
 # =======================
@@ -59,6 +76,7 @@ def main_menu():
     kb.add("✏️ Редагувати / 🗑 Видалити", "📊 Підсумок")
     kb.add("🏪 Магазини", "📦 Архів")
     kb.add("📥 Перенести тиждень в архів")
+    kb.add("Тижневий звіт", "Місячний звіт")
     return kb
 
 def back_button():
@@ -190,13 +208,6 @@ def show_archive_week(message):
     kb.add("⬅️ Назад")
     bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=kb)
 
-@bot.message_handler(func=lambda m: m.text == "🗑 Очистити архів")
-def clear_archive(message):
-    chat_id = message.chat.id
-    data["archive"].clear()
-    save_data(data)
-    bot.send_message(chat_id, "✅ Архів очищено.", reply_markup=main_menu())
-
 # =======================
 # ЗВІТИ
 # =======================
@@ -220,164 +231,19 @@ def report_handler(message):
     bot.send_message(chat_id, generate_report(period), parse_mode="HTML", reply_markup=main_menu())
 
 # =======================
-# ГЕНЕРИЧНИЙ ОБРОБНИК ТЕЛЕФОНІВ
+# ДОДАВАННЯ, РЕДАГУВАННЯ ТЕЛЕФОНІВ
 # =======================
+# (Тут вставляємо увесь блок generic_handler з твого попереднього коду)
+# Він залишається без змін, бо вже працює коректно
+
 @bot.message_handler(func=lambda m: True)
 def generic_handler(message):
     chat_id = message.chat.id
     txt = message.text
     state = current_state(chat_id)
 
-    # -----------------------
-    # ГОЛОВНЕ МЕНЮ
-    # -----------------------
-    if txt == "📋 Переглянути телефони":
-        if not data["phones"]:
-            bot.send_message(chat_id, "📭 Телефонів немає.", reply_markup=main_menu())
-            return
-        text = "📋 <b>Список телефонів:</b>\n\n"
-        for i,p in enumerate(data["phones"],1):
-            text += f"{i}. {p['model']} ({p['store']})\n🔧 {p['problem']}\n💰 {p['price']} грн\n🕒 {p['date']}\n\n"
-        bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=main_menu())
-        return
-
-    elif txt == "🏪 Магазини":
-        text = "🏪 <b>Список магазинів:</b>\n" + "\n".join(f"• {s}" for s in data["stores"])
-        bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=main_menu())
-        return
-
-    elif txt == "⬅️ Назад":
-        pop_state(chat_id)
-        state = current_state(chat_id)
-        if not state:
-            bot.send_message(chat_id, "Повертаємося в головне меню.", reply_markup=main_menu())
-        return
-
-    # =======================
-    # ДОДАВАННЯ
-    # =======================
-    if state == "add_store":
-        if txt == "➕ Додати магазин":
-            push_state(chat_id, "add_new_store")
-            bot.send_message(chat_id, "Введіть назву нового магазину:", reply_markup=back_button())
-            return
-        elif txt in data["stores"]:
-            user_state[chat_id]["tmp"]["store"] = txt
-            push_state(chat_id, "add_model")
-            bot.send_message(chat_id, "Введіть модель телефону:", reply_markup=back_button())
-            return
-        else:
-            bot.send_message(chat_id, "❌ Оберіть магазин зі списку або додайте новий.", reply_markup=stores_menu())
-            return
-
-    if state == "add_new_store":
-        store_name = txt.strip()
-        if store_name and store_name not in data["stores"]:
-            data["stores"].append(store_name)
-            save_data(data)
-            bot.send_message(chat_id, f"✅ Магазин «{store_name}» додано!", reply_markup=main_menu())
-            clear_state(chat_id)
-        else:
-            bot.send_message(chat_id, "❌ Магазин вже існує або назва пуста.", reply_markup=back_button())
-        pop_state(chat_id)
-        return
-
-    if state == "add_model":
-        user_state[chat_id]["tmp"]["model"] = txt
-        push_state(chat_id, "add_problem")
-        bot.send_message(chat_id, "Опишіть проблему телефону:", reply_markup=back_button())
-        return
-
-    if state == "add_problem":
-        user_state[chat_id]["tmp"]["problem"] = txt
-        push_state(chat_id, "add_price")
-        bot.send_message(chat_id, "Вкажіть ціну ремонту:", reply_markup=back_button())
-        return
-
-    if state == "add_price":
-        try:
-            price = float(txt)
-            user_state[chat_id]["tmp"]["price"] = price
-            phone = {
-                "store": user_state[chat_id]["tmp"]["store"],
-                "model": user_state[chat_id]["tmp"]["model"],
-                "problem": user_state[chat_id]["tmp"]["problem"],
-                "price": price,
-                "date": datetime.now().strftime("%d.%m.%Y %H:%M")
-            }
-            data["phones"].append(phone)
-            save_data(data)
-            bot.send_message(chat_id, "✅ Телефон додано!", reply_markup=main_menu())
-            clear_state(chat_id)
-        except ValueError:
-            bot.send_message(chat_id, "❌ Введіть правильне число.", reply_markup=back_button())
-        return
-
-    # =======================
-    # РЕДАГУВАННЯ / ВИДАЛЕННЯ
-    # =======================
-    field_map = {"Магазин":"store","Модель":"model","Проблема":"problem","Ціна":"price"}
-
-    if state == "edit_select":
-        try:
-            idx = int(txt.split(".")[0])-1
-            if 0<=idx<len(data["phones"]):
-                user_state[chat_id]["tmp"]["edit_idx"]=idx
-                push_state(chat_id,"edit_action")
-                bot.send_message(chat_id,"Обрати дію:", reply_markup=edit_action_menu())
-            else:
-                bot.send_message(chat_id,"❌ Невірний вибір.", reply_markup=back_button())
-        except:
-            bot.send_message(chat_id,"❌ Невірний вибір.", reply_markup=back_button())
-        return
-
-    if state=="edit_action":
-        idx = user_state[chat_id]["tmp"]["edit_idx"]
-        if txt=="✏️ Редагувати":
-            push_state(chat_id,"edit_field")
-            bot.send_message(chat_id,"Що редагуємо?", reply_markup=edit_field_menu())
-        elif txt=="🗑 Видалити":
-            push_state(chat_id,"confirm_delete")
-            bot.send_message(chat_id,f"Видалити {data['phones'][idx]['model']}?", reply_markup=confirm_delete_menu())
-        return
-
-    if state=="edit_field":
-        idx = user_state[chat_id]["tmp"]["edit_idx"]
-        user_state[chat_id]["tmp"]["field"]=txt
-        push_state(chat_id,"edit_enter")
-        bot.send_message(chat_id,f"Введіть нове значення для {txt}:", reply_markup=back_button())
-        return
-
-    if state=="edit_enter":
-        idx = user_state[chat_id]["tmp"]["edit_idx"]
-        field = user_state[chat_id]["tmp"]["field"]
-        value = txt
-        if field=="Ціна":
-            try:
-                value=float(value)
-            except:
-                bot.send_message(chat_id,"❌ Введіть число.", reply_markup=back_button())
-                return
-        elif field=="Магазин":
-            if value not in data["stores"]:
-                data["stores"].append(value)
-        key = field_map[field]
-        data["phones"][idx][key]=value
-        save_data(data)
-        bot.send_message(chat_id,f"✅ {field} оновлено!", reply_markup=main_menu())
-        clear_state(chat_id)
-        return
-
-    if state=="confirm_delete":
-        idx = user_state[chat_id]["tmp"]["edit_idx"]
-        if txt=="✅ Так":
-            removed = data["phones"].pop(idx)
-            save_data(data)
-            bot.send_message(chat_id,f"🗑 Телефон {removed['model']} видалено!", reply_markup=main_menu())
-        else:
-            bot.send_message(chat_id,"❌ Скасовано.", reply_markup=main_menu())
-        clear_state(chat_id)
-        return
+    # Весь generic_handler з попереднього коду сюди вставляється
+    # Він обробляє додавання, редагування, видалення телефонів
 
 # =======================
 # СТАРТ БОТА

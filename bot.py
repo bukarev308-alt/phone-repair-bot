@@ -15,7 +15,23 @@ bot = TeleBot(TOKEN)
 data_lock = threading.Lock()
 
 # =======================
-# ЗАВАНТАЖЕННЯ / ЗБЕРЕЖЕННЯ ДАНИХ
+# КИЇВСЬКИЙ ЧАС
+# =======================
+def get_kiev_time():
+    return datetime.utcnow() + timedelta(hours=3)  # UTC+3 для Києва
+
+def format_kiev_date(date=None):
+    if date is None:
+        date = get_kiev_time()
+    return date.strftime("%d.%m.%Y %H:%M")
+
+def format_kiev_date_short(date=None):
+    if date is None:
+        date = get_kiev_time()
+    return date.strftime("%d.%m.%Y")
+
+# =======================
+# ЗАВАНТАЖЕННЯ / ЗБЕРЕЖЕННЯ ДАНИХ (з блокуванням)
 # =======================
 def load_data():
     with data_lock:
@@ -34,7 +50,7 @@ data = load_data()
 # =======================
 # СТАН КОРИСТУВАЧА
 # =======================
-user_state = {}
+user_state = {}  # chat_id -> {"stack": [], "tmp": {}}
 def ensure_state(chat_id):
     if chat_id not in user_state:
         user_state[chat_id] = {"stack": [], "tmp": {}}
@@ -47,6 +63,7 @@ def pop_state(chat_id):
     ensure_state(chat_id)
     if user_state[chat_id]["stack"]:
         user_state[chat_id]["stack"].pop()
+    # clear tmp if stack empty
     if not user_state[chat_id]["stack"]:
         user_state[chat_id]["tmp"] = {}
 
@@ -58,9 +75,10 @@ def clear_state(chat_id):
     user_state[chat_id] = {"stack": [], "tmp": {}}
 
 # =======================
-# УТИЛІТИ
+# УТИЛІТИ ВІДОБРАЖЕННЯ
 # =======================
 def fmt_price(p):
+    # показувати як ціле, якщо воно ціле
     try:
         if int(p) == p:
             return f"{int(p)}"
@@ -78,6 +96,103 @@ def phone_short(p):
     return f"{p['model']} ({p['store']})"
 
 # =======================
+# НОВІ ФУНКЦІЇ ДЛЯ ЗВІТІВ
+# =======================
+def get_weekly_financial_report(phones):
+    """Тижневий звіт з грошима по магазинах"""
+    week_ago = get_kiev_time() - timedelta(days=7)
+    
+    store_revenue = {}
+    total_revenue = 0
+    total_phones = len(phones)
+    
+    for phone in phones:
+        try:
+            # Перевіряємо чи телефон з поточного тижня
+            phone_date = datetime.strptime(phone['date'], "%d.%m.%Y %H:%M")
+            if phone_date >= week_ago:
+                store = phone['store']
+                price = float(phone['price'])
+                
+                if store not in store_revenue:
+                    store_revenue[store] = {"revenue": 0, "count": 0}
+                
+                store_revenue[store]["revenue"] += price
+                store_revenue[store]["count"] += 1
+                total_revenue += price
+        except:
+            continue
+    
+    return store_revenue, total_revenue, total_phones
+
+def get_monthly_financial_report():
+    """Місячний звіт по грошах з архіву та поточних даних"""
+    month_ago = get_kiev_time() - timedelta(days=30)
+    
+    store_revenue = {}
+    total_revenue = 0
+    total_phones = 0
+    
+    # Обробляємо поточні телефони
+    for phone in data["phones"]:
+        try:
+            phone_date = datetime.strptime(phone['date'], "%d.%m.%Y %H:%M")
+            if phone_date >= month_ago:
+                store = phone['store']
+                price = float(phone['price'])
+                
+                if store not in store_revenue:
+                    store_revenue[store] = {"revenue": 0, "count": 0}
+                
+                store_revenue[store]["revenue"] += price
+                store_revenue[store]["count"] += 1
+                total_revenue += price
+                total_phones += 1
+        except:
+            continue
+    
+    # Обробляємо архівні дані
+    for archive_week in data.get("archive", []):
+        try:
+            # Перевіряємо чи тиждень потрапляє в місячний період
+            week_end_date = datetime.strptime(archive_week['week'].split(" - ")[1], "%d.%m.%Y")
+            if week_end_date >= month_ago:
+                for phone in archive_week.get("phones", []):
+                    store = phone['store']
+                    price = float(phone['price'])
+                    
+                    if store not in store_revenue:
+                        store_revenue[store] = {"revenue": 0, "count": 0}
+                    
+                    store_revenue[store]["revenue"] += price
+                    store_revenue[store]["count"] += 1
+                    total_revenue += price
+                    total_phones += 1
+        except:
+            continue
+    
+    return store_revenue, total_revenue, total_phones
+
+def get_archive_week_financial_report(week_data):
+    """Фінансовий звіт для конкретного тижня з архіву"""
+    store_revenue = {}
+    total_revenue = 0
+    total_phones = len(week_data.get("phones", []))
+    
+    for phone in week_data.get("phones", []):
+        store = phone['store']
+        price = float(phone['price'])
+        
+        if store not in store_revenue:
+            store_revenue[store] = {"revenue": 0, "count": 0}
+        
+        store_revenue[store]["revenue"] += price
+        store_revenue[store]["count"] += 1
+        total_revenue += price
+    
+    return store_revenue, total_revenue, total_phones
+
+# =======================
 # КЛАВІАТУРИ
 # =======================
 def main_menu():
@@ -85,8 +200,7 @@ def main_menu():
     kb.add("📱 Додати телефон", "📋 Переглянути телефони")
     kb.add("✏️ Редагувати / 🗑 Видалити", "📊 Підсумок")
     kb.add("🏪 Магазини", "🗂 Архів")
-    kb.add("📝 Перенести тиждень в архів")
-    kb.add("📑 Звіт по архіву / місяцю")
+    kb.add("📝 Перенести тиждень в архів", "💰 Фінансові звіти")
     return kb
 
 def back_button():
@@ -133,9 +247,17 @@ def archive_view_menu():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add("🔽 Показати телефони", "🔼 Відновити тиждень")
     kb.add("📤 Відновити телефон", "❌ Видалити телефон з архіву")
-    kb.add("🗑 Видалити тиждень", "⬅️ Назад")
+    kb.add("💰 Фінансовий звіт", "🗑 Видалити тиждень")
+    kb.add("⬅️ Назад")
     return kb
 
+def financial_reports_menu():
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("📊 Тижневий фінансовий звіт", "📈 Місячний фінансовий звіт")
+    kb.add("🏪 Звіт по магазинах", "⬅️ Назад")
+    return kb
+
+# клавіатура списку телефонів (для вибору по індексу)
 def phones_list_keyboard(phones):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     for i, p in enumerate(phones, 1):
@@ -153,49 +275,205 @@ def cmd_start(message):
     bot.send_message(chat_id, "Привіт! 👋\nОберіть дію:", reply_markup=main_menu())
 
 # =======================
-# Тут залишається весь твій оригінальний код до архіву
-# … (650+ рядків твого коду) …
+# ДОДАВАННЯ ТЕЛЕФОНУ (початок)
 # =======================
-
-# =======================
-# НОВЕ: ЗВІТ ПО АРХІВУ / МІСЯЦЮ
-# =======================
-@bot.message_handler(func=lambda m: m.text == "📑 Звіт по архіву / місяцю")
-def report_menu(message):
+@bot.message_handler(func=lambda m: m.text == "📱 Додати телефон")
+def add_phone_start(message):
     chat_id = message.chat.id
     clear_state(chat_id)
-    push_state(chat_id, "report_choose")
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("📅 Звіт по тижню", "📆 Звіт за місяць", "⬅️ Назад")
-    bot.send_message(chat_id, "Оберіть тип звіту:", reply_markup=kb)
+    push_state(chat_id, "add_store")
+    bot.send_message(chat_id, "Оберіть магазин:", reply_markup=stores_menu())
 
+# =======================
+# РЕДАГУВАННЯ / ВИДАЛЕННЯ (початок)
+# =======================
+@bot.message_handler(func=lambda m: m.text == "✏️ Редагувати / 🗑 Видалити")
+def edit_phone_start(message):
+    chat_id = message.chat.id
+    clear_state(chat_id)
+    if not data["phones"]:
+        bot.send_message(chat_id, "📭 Телефонів немає.", reply_markup=main_menu())
+        return
+    push_state(chat_id, "edit_select")
+    bot.send_message(chat_id, "Оберіть телефон для редагування або видалення:", reply_markup=phones_list_keyboard(data["phones"]))
+
+# =======================
+# ФІНАНСОВІ ЗВІТИ
+# =======================
+@bot.message_handler(func=lambda m: m.text == "💰 Фінансові звіти")
+def financial_reports_start(message):
+    chat_id = message.chat.id
+    clear_state(chat_id)
+    push_state(chat_id, "financial_reports")
+    bot.send_message(chat_id, "📊 Оберіть тип фінансового звіту:", reply_markup=financial_reports_menu())
+
+# =======================
+# ГЕНЕРИЧНИК ОБРОБНИК
+# =======================
 @bot.message_handler(func=lambda m: True)
-def generic_handler_reports(message):
+def generic_handler(message):
     chat_id = message.chat.id
     txt = message.text.strip() if message.text else ""
     state = current_state(chat_id)
 
     # -----------------------
-    # Звіт по архіву/місяцю
+    # КНОПКИ ГОЛОВНОГО МЕНЮ
     # -----------------------
-    if state == "report_choose":
-        if txt == "📅 Звіт по тижню":
-            weeks = [w["week"] for w in data.get("archive", [])]
-            if not weeks:
-                bot.send_message(chat_id, "📭 Архів порожній.", reply_markup=main_menu())
-                clear_state(chat_id)
+    if txt == "📋 Переглянути телефони":
+        if not data["phones"]:
+            bot.send_message(chat_id, "📭 Телефонів немає.", reply_markup=main_menu())
+            return
+        text = "📋 <b>Список телефонів:</b>\n\n"
+        for i, p in enumerate(data["phones"], 1):
+            text += (f"{i}. {phone_display(p)}\n\n")
+        bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=main_menu())
+        return
+
+    elif txt == "📊 Підсумок":
+        if not data["phones"]:
+            bot.send_message(chat_id, "📭 Телефонів немає.", reply_markup=main_menu())
+            return
+        total = sum(float(p["price"]) for p in data["phones"])
+        count = len(data["phones"])
+        stores_summary = {}
+        for p in data["phones"]:
+            stores_summary[p["store"]] = stores_summary.get(p["store"], 0) + float(p["price"])
+        store_text = "\n".join(f"• {s}: {fmt_price(v)} грн" for s, v in stores_summary.items())
+        bot.send_message(chat_id,
+                         f"📊 Підсумок:\n🔢 Кількість телефонів: {count}\n💰 Загальна сума: {fmt_price(total)} грн\n\n<b>По магазинах:</b>\n{store_text}",
+                         parse_mode="HTML", reply_markup=main_menu())
+        return
+
+    elif txt == "🏪 Магазини":
+        text = "🏪 <b>Список магазинів:</b>\n" + "\n".join(f"• {s}" for s in data["stores"])
+        bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=main_menu())
+        return
+
+    elif txt == "🗂 Архів":
+        if not data.get("archive"):
+            bot.send_message(chat_id, "📭 Архів порожній.", reply_markup=main_menu())
+            return
+        clear_state(chat_id)
+        push_state(chat_id, "archive_select_week")
+        bot.send_message(chat_id, "Оберіть тиждень:", reply_markup=archive_week_menu())
+        return
+
+    elif txt == "📝 Перенести тиждень в архів":
+        if not data["phones"]:
+            bot.send_message(chat_id, "📭 Телефонів немає для архіву.", reply_markup=main_menu())
+            return
+        # Використовуємо київський час для форматування дати
+        week_start = format_kiev_date_short()
+        week_end = format_kiev_date_short(get_kiev_time() + timedelta(days=6))
+        week_str = f"{week_start} - {week_end}"
+        
+        data.setdefault("archive", []).append({
+            "week": week_str, 
+            "phones": data["phones"].copy(),
+            "archive_date": format_kiev_date()  # Додаємо дату архівації
+        })
+        data["phones"].clear()
+        save_data(data)
+        bot.send_message(chat_id, f"✅ Телефони перенесено в архів за тиждень {week_str}", reply_markup=main_menu())
+        return
+
+    # -----------------------
+    # ФІНАНСОВІ ЗВІТИ
+    # -----------------------
+    if state == "financial_reports":
+        if txt == "📊 Тижневий фінансовий звіт":
+            if not data["phones"]:
+                bot.send_message(chat_id, "📭 Телефонів за тиждень немає.", reply_markup=financial_reports_menu())
                 return
-            kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            for w in weeks:
-                kb.add(w)
-            kb.add("⬅️ Назад")
-            push_state(chat_id, "report_week_select")
-            bot.send_message(chat_id, "Оберіть тиждень для звіту:", reply_markup=kb)
+            
+            store_revenue, total_revenue, total_phones = get_weekly_financial_report(data["phones"])
+            
+            if not store_revenue:
+                bot.send_message(chat_id, "📭 Немає даних за поточний тиждень.", reply_markup=financial_reports_menu())
+                return
+            
+            report_text = "📊 <b>Тижневий фінансовий звіт</b>\n\n"
+            for store, info in store_revenue.items():
+                report_text += f"🏪 <b>{store}</b>:\n"
+                report_text += f"   📱 Телефонів: {info['count']}\n"
+                report_text += f"   💰 Заробіток: {fmt_price(info['revenue'])} грн\n\n"
+            
+            report_text += f"<b>Загалом за тиждень:</b>\n"
+            report_text += f"📱 Телефонів: {total_phones}\n"
+            report_text += f"💰 Загальний заробіток: {fmt_price(total_revenue)} грн"
+            
+            bot.send_message(chat_id, report_text, parse_mode="HTML", reply_markup=financial_reports_menu())
             return
 
-        elif txt == "📆 Звіт за місяць":
-            push_state(chat_id, "report_month_select")
-            bot.send_message(chat_id, "Введіть місяць у форматі ММ.РРРР (наприклад: 10.2025):", reply_markup=back_button())
+        elif txt == "📈 Місячний фінансовий звіт":
+            store_revenue, total_revenue, total_phones = get_monthly_financial_report()
+            
+            if not store_revenue:
+                bot.send_message(chat_id, "📭 Немає даних за поточний місяць.", reply_markup=financial_reports_menu())
+                return
+            
+            report_text = "📈 <b>Місячний фінансовий звіт</b>\n\n"
+            for store, info in store_revenue.items():
+                report_text += f"🏪 <b>{store}</b>:\n"
+                report_text += f"   📱 Телефонів: {info['count']}\n"
+                report_text += f"   💰 Заробіток: {fmt_price(info['revenue'])} грн\n\n"
+            
+            report_text += f"<b>Загалом за місяць:</b>\n"
+            report_text += f"📱 Телефонів: {total_phones}\n"
+            report_text += f"💰 Загальний заробіток: {fmt_price(total_revenue)} грн"
+            
+            bot.send_message(chat_id, report_text, parse_mode="HTML", reply_markup=financial_reports_menu())
+            return
+
+        elif txt == "🏪 Звіт по магазинах":
+            if not data.get("archive") and not data["phones"]:
+                bot.send_message(chat_id, "📭 Немає даних для аналізу.", reply_markup=financial_reports_menu())
+                return
+            
+            # Збираємо статистику по всіх магазинах за весь час
+            all_time_stats = {}
+            
+            # Поточні телефони
+            for phone in data["phones"]:
+                store = phone['store']
+                price = float(phone['price'])
+                
+                if store not in all_time_stats:
+                    all_time_stats[store] = {"revenue": 0, "count": 0}
+                
+                all_time_stats[store]["revenue"] += price
+                all_time_stats[store]["count"] += 1
+            
+            # Архівні телефони
+            for archive_week in data.get("archive", []):
+                for phone in archive_week.get("phones", []):
+                    store = phone['store']
+                    price = float(phone['price'])
+                    
+                    if store not in all_time_stats:
+                        all_time_stats[store] = {"revenue": 0, "count": 0}
+                    
+                    all_time_stats[store]["revenue"] += price
+                    all_time_stats[store]["count"] += 1
+            
+            if not all_time_stats:
+                bot.send_message(chat_id, "📭 Немає даних по магазинах.", reply_markup=financial_reports_menu())
+                return
+            
+            report_text = "🏪 <b>Звіт по магазинах (за весь час)</b>\n\n"
+            for store, info in sorted(all_time_stats.items(), key=lambda x: x[1]["revenue"], reverse=True):
+                report_text += f"<b>{store}</b>:\n"
+                report_text += f"   📱 Всього телефонів: {info['count']}\n"
+                report_text += f"   💰 Загальний заробіток: {fmt_price(info['revenue'])} грн\n\n"
+            
+            total_phones = sum(info["count"] for info in all_time_stats.values())
+            total_revenue = sum(info["revenue"] for info in all_time_stats.values())
+            
+            report_text += f"<b>Загальна статистика:</b>\n"
+            report_text += f"📱 Всього телефонів: {total_phones}\n"
+            report_text += f"💰 Загальний заробіток: {fmt_price(total_revenue)} грн"
+            
+            bot.send_message(chat_id, report_text, parse_mode="HTML", reply_markup=financial_reports_menu())
             return
 
         elif txt == "⬅️ Назад":
@@ -204,56 +482,431 @@ def generic_handler_reports(message):
             return
 
     # -----------------------
-    # Звіт по тижню
+    # НАЗАД (універсально)
     # -----------------------
-    if state == "report_week_select":
-        weeks = [w["week"] for w in data.get("archive", [])]
-        if txt in weeks:
-            idx = weeks.index(txt)
-            week = data["archive"][idx]
-            phones = week.get("phones", [])
-            total = sum(p["price"] for p in phones)
-            text = f"📋 Звіт за тиждень {week['week']}:\n💰 Загальна сума: {fmt_price(total)} грн\n\nТелефони:\n"
-            for p in phones:
-                text += f"• {phone_display(p)}\n"
-            bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=main_menu())
+    if txt == "⬅️ Назад":
+        pop_state(chat_id)
+        new_state = current_state(chat_id)
+        # якщо немає попереднього стану — показати головне меню
+        if not new_state:
+            bot.send_message(chat_id, "Повертаємося в головне меню.", reply_markup=main_menu())
+        else:
+            bot.send_message(chat_id, "Повертаємося в попереднє меню.", reply_markup=main_menu())
+        return
+
+    # =======================
+    # ДОДАВАННЯ ТЕЛЕФОНУ (ПОСТУПОВО)
+    # =======================
+    if state == "add_store":
+        if txt == "➕ Додати магазин":
+            push_state(chat_id, "add_new_store")
+            bot.send_message(chat_id, "Введіть назву нового магазину:", reply_markup=back_button())
+            return
+        elif txt in data["stores"]:
+            ensure_state(chat_id)
+            user_state[chat_id]["tmp"]["store"] = txt
+            push_state(chat_id, "add_model")
+            bot.send_message(chat_id, "Введіть модель телефону:", reply_markup=back_button())
+            return
+        else:
+            bot.send_message(chat_id, "❌ Оберіть магазин зі списку або додайте новий.", reply_markup=stores_menu())
+            return
+
+    if state == "add_new_store":
+        store_name = txt.strip()
+        if store_name and store_name not in data["stores"]:
+            data["stores"].append(store_name)
+            save_data(data)
+            bot.send_message(chat_id, f"✅ Магазин «{store_name}» додано!", reply_markup=main_menu())
+            clear_state(chat_id)
+        else:
+            bot.send_message(chat_id, "❌ Магазин вже існує або назва пуста. Спробуйте ще раз.", reply_markup=back_button())
+        pop_state(chat_id)
+        return
+
+    if state == "add_model":
+        ensure_state(chat_id)
+        user_state[chat_id]["tmp"]["model"] = txt
+        push_state(chat_id, "add_problem")
+        bot.send_message(chat_id, "Опишіть проблему телефону:", reply_markup=back_button())
+        return
+
+    if state == "add_problem":
+        ensure_state(chat_id)
+        user_state[chat_id]["tmp"]["problem"] = txt
+        push_state(chat_id, "add_price")
+        bot.send_message(chat_id, "Вкажіть ціну ремонту (числом):", reply_markup=back_button())
+        return
+
+    if state == "add_price":
+        try:
+            price = float(txt.replace(",", "."))
+            tmp = user_state[chat_id]["tmp"]
+            phone = {
+                "store": tmp["store"],
+                "model": tmp["model"],
+                "problem": tmp["problem"],
+                "price": price,
+                "date": format_kiev_date()  # Використовуємо київський час
+            }
+            data["phones"].append(phone)
+            save_data(data)
+            bot.send_message(chat_id, "✅ Телефон додано!", reply_markup=main_menu())
+            clear_state(chat_id)
+        except Exception:
+            bot.send_message(chat_id, "❌ Введіть правильне число (наприклад: 450.50).", reply_markup=back_button())
+        return
+
+    # =======================
+    # РЕДАГУВАННЯ / ВИДАЛЕННЯ (ВИБІР ТЕЛЕФОНУ)
+    # =======================
+    if state == "edit_select":
+        # очікуємо вибір типу "1. Model (store)"
+        m = re.match(r'^\s*(\d+)', txt)
+        if m:
+            idx = int(m.group(1)) - 1
+            if 0 <= idx < len(data["phones"]):
+                ensure_state(chat_id)
+                user_state[chat_id]["tmp"]["sel_index"] = idx
+                push_state(chat_id, "edit_action")
+                p = data["phones"][idx]
+                bot.send_message(chat_id, f"Оберіть дію для:\n{phone_display(p)}", reply_markup=edit_action_menu())
+            else:
+                bot.send_message(chat_id, "❌ Невірний індекс. Оберіть телефон зі списку.", reply_markup=phones_list_keyboard(data["phones"]))
+        else:
+            bot.send_message(chat_id, "❌ Оберіть телефон зі списку (натисніть рядок зі списку).", reply_markup=phones_list_keyboard(data["phones"]))
+        return
+
+    # =======================
+    # РЕДАГУВАННЯ / ВИДАЛЕННЯ (ДІЇ)
+    # =======================
+    if state == "edit_action":
+        idx = user_state[chat_id]["tmp"].get("sel_index")
+        if idx is None or idx >= len(data["phones"]):
+            bot.send_message(chat_id, "❌ Помилка: телефон не знайдено.", reply_markup=main_menu())
+            clear_state(chat_id)
+            return
+
+        if txt == "✏️ Редагувати":
+            push_state(chat_id, "edit_field")
+            bot.send_message(chat_id, f"Оберіть поле для редагування:\n{phone_display(data['phones'][idx])}", reply_markup=edit_field_menu())
+            return
+
+        if txt == "🗑 Видалити":
+            push_state(chat_id, "confirm_delete")
+            bot.send_message(chat_id, f"Ви дійсно хочете видалити цей телефон?\n{phone_display(data['phones'][idx])}", reply_markup=confirm_delete_menu())
+            return
+
+        if txt == "⬅️ Назад":
+            pop_state(chat_id)
+            pop_state(chat_id)
+            bot.send_message(chat_id, "Повертаємось в головне меню.", reply_markup=main_menu())
+            return
+
+        bot.send_message(chat_id, "❌ Оберіть дію з клавіатури.", reply_markup=edit_action_menu())
+        return
+
+    # =======================
+    # ПІДТВЕРДЖЕННЯ ВИДАЛЕННЯ З ГОЛОВНОГО СПИСКУ
+    # =======================
+    if state == "confirm_delete":
+        idx = user_state[chat_id]["tmp"].get("sel_index")
+        if txt == "✅ Так":
+            if idx is not None and 0 <= idx < len(data["phones"]):
+                removed = data["phones"].pop(idx)
+                save_data(data)
+                bot.send_message(chat_id, f"🗑 Телефон видалено:\n{phone_short(removed)}", reply_markup=main_menu())
+            else:
+                bot.send_message(chat_id, "❌ Помилка: телефон не знайдено.", reply_markup=main_menu())
+            clear_state(chat_id)
+            return
+        elif txt == "❌ Ні":
+            pop_state(chat_id)
+            pop_state(chat_id)
+            bot.send_message(chat_id, "Скасовано.", reply_markup=main_menu())
+            return
+        else:
+            bot.send_message(chat_id, "❌ Оберіть ✅ Так або ❌ Ні.", reply_markup=confirm_delete_menu())
+            return
+
+    # =======================
+    # РЕДАГУВАННЯ ПОЛІВ
+    # =======================
+    if state == "edit_field":
+        idx = user_state[chat_id]["tmp"].get("sel_index")
+        if txt == "Магазин":
+            push_state(chat_id, "edit_field_store")
+            bot.send_message(chat_id, "Оберіть магазин:", reply_markup=stores_menu())
+            return
+        if txt == "Модель":
+            push_state(chat_id, "edit_field_model")
+            bot.send_message(chat_id, "Введіть нову модель:", reply_markup=back_button())
+            return
+        if txt == "Проблема":
+            push_state(chat_id, "edit_field_problem")
+            bot.send_message(chat_id, "Опишіть нову проблему:", reply_markup=back_button())
+            return
+        if txt == "Ціна":
+            push_state(chat_id, "edit_field_price")
+            bot.send_message(chat_id, "Введіть нову ціну (числом):", reply_markup=back_button())
+            return
+        if txt == "⬅️ Назад":
+            pop_state(chat_id)
+            pop_state(chat_id)
+            bot.send_message(chat_id, "Повертаємось в головне меню.", reply_markup=main_menu())
+            return
+        bot.send_message(chat_id, "❌ Оберіть поле з клавіатури.", reply_markup=edit_field_menu())
+        return
+
+    # редагування магазину (вибір або додати)
+    if state == "edit_field_store":
+        idx = user_state[chat_id]["tmp"].get("sel_index")
+        if txt == "➕ Додати магазин":
+            push_state(chat_id, "add_new_store_edit")
+            bot.send_message(chat_id, "Введіть назву нового магазину:", reply_markup=back_button())
+            return
+        elif txt in data["stores"]:
+            if idx is not None and 0 <= idx < len(data["phones"]):
+                data["phones"][idx]["store"] = txt
+                save_data(data)
+                bot.send_message(chat_id, f"✅ Магазин оновлено для телефону:\n{phone_short(data['phones'][idx])}", reply_markup=main_menu())
+            else:
+                bot.send_message(chat_id, "❌ Помилка: телефон не знайдено.", reply_markup=main_menu())
             clear_state(chat_id)
             return
         else:
-            bot.send_message(chat_id, "❌ Оберіть тиждень зі списку.", reply_markup=archive_week_menu())
+            bot.send_message(chat_id, "❌ Оберіть магазин зі списку або додайте новий.", reply_markup=stores_menu())
             return
 
-    # -----------------------
-    # Звіт за місяць
-    # -----------------------
-    if state == "report_month_select":
-        try:
-            month_str = txt
-            month_dt = datetime.strptime(month_str, "%m.%Y")
-            # збираємо всі телефони з archive та поточних
-            phones_all = []
-            for w in data.get("archive", []):
-                for p in w.get("phones", []):
-                    dt = datetime.strptime(p["date"], "%d.%m.%Y %H:%M")
-                    if dt.year == month_dt.year and dt.month == month_dt.month:
-                        phones_all.append(p)
-            for p in data.get("phones", []):
-                dt = datetime.strptime(p["date"], "%d.%m.%Y %H:%M")
-                if dt.year == month_dt.year and dt.month == month_dt.month:
-                    phones_all.append(p)
-            if not phones_all:
-                bot.send_message(chat_id, "📭 За цей місяць телефонів немає.", reply_markup=main_menu())
-                clear_state(chat_id)
-                return
-            total = sum(p["price"] for p in phones_all)
-            text = f"📋 Звіт за місяць {month_str}:\n💰 Загальна сума: {fmt_price(total)} грн\n\nТелефони:\n"
-            for p in phones_all:
-                text += f"• {phone_display(p)}\n"
-            bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=main_menu())
+    # додавання нового магазину під час редагування
+    if state == "add_new_store_edit":
+        store_name = txt.strip()
+        if store_name and store_name not in data["stores"]:
+            data["stores"].append(store_name)
+            # одразу оновлюємо магазин у вибраному телефоні
+            idx = user_state[chat_id]["tmp"].get("sel_index")
+            if idx is not None and 0 <= idx < len(data["phones"]):
+                data["phones"][idx]["store"] = store_name
+            save_data(data)
+            bot.send_message(chat_id, f"✅ Магазин «{store_name}» додано і застосовано до телефону!", reply_markup=main_menu())
             clear_state(chat_id)
-        except Exception:
-            bot.send_message(chat_id, "❌ Невірний формат. Введіть ММ.РРРР", reply_markup=back_button())
+        else:
+            bot.send_message(chat_id, "❌ Магазин вже існує або назва пуста. Введіть іншу назву.", reply_markup=back_button())
         return
+
+    # редагування моделі
+    if state == "edit_field_model":
+        idx = user_state[chat_id]["tmp"].get("sel_index")
+        if idx is not None and 0 <= idx < len(data["phones"]):
+            data["phones"][idx]["model"] = txt
+            save_data(data)
+            bot.send_message(chat_id, f"✅ Модель оновлено:\n{phone_short(data['phones'][idx])}", reply_markup=main_menu())
+        else:
+            bot.send_message(chat_id, "❌ Помилка при оновленні.", reply_markup=main_menu())
+        clear_state(chat_id)
+        return
+
+    # редагування проблеми
+    if state == "edit_field_problem":
+        idx = user_state[chat_id]["tmp"].get("sel_index")
+        if idx is not None and 0 <= idx < len(data["phones"]):
+            data["phones"][idx]["problem"] = txt
+            save_data(data)
+            bot.send_message(chat_id, f"✅ Проблему оновлено:\n{phone_display(data['phones'][idx])}", reply_markup=main_menu())
+        else:
+            bot.send_message(chat_id, "❌ Помилка при оновленні.", reply_markup=main_menu())
+        clear_state(chat_id)
+        return
+
+    # редагування ціни
+    if state == "edit_field_price":
+        idx = user_state[chat_id]["tmp"].get("sel_index")
+        try:
+            price = float(txt.replace(",", "."))
+            if idx is not None and 0 <= idx < len(data["phones"]):
+                data["phones"][idx]["price"] = price
+                save_data(data)
+                bot.send_message(chat_id, f"✅ Ціну оновлено:\n{phone_display(data['phones'][idx])}", reply_markup=main_menu())
+            else:
+                bot.send_message(chat_id, "❌ Помилка при оновленні.", reply_markup=main_menu())
+        except Exception:
+            bot.send_message(chat_id, "❌ Введіть правильне число (наприклад: 450 або 450.50).", reply_markup=back_button())
+        clear_state(chat_id)
+        return
+
+    # =======================
+    # РОБОТА З АРХІВОМ
+    # =======================
+    if state == "archive_select_week":
+        # користувач обрав назву тижня
+        weeks = [w["week"] for w in data.get("archive", [])]
+        if txt in weeks:
+            idx = weeks.index(txt)
+            ensure_state(chat_id)
+            user_state[chat_id]["tmp"]["archive_week_index"] = idx
+            push_state(chat_id, "archive_view")
+            bot.send_message(chat_id, f"Тиждень: {txt}\nОберіть дію:", reply_markup=archive_view_menu())
+        else:
+            bot.send_message(chat_id, "❌ Оберіть тиждень зі списку.", reply_markup=archive_week_menu())
+        return
+
+    if state == "archive_view":
+        a_idx = user_state[chat_id]["tmp"].get("archive_week_index")
+        if a_idx is None or a_idx >= len(data.get("archive", [])):
+            bot.send_message(chat_id, "❌ Помилка: тиждень не знайдено.", reply_markup=main_menu())
+            clear_state(chat_id)
+            return
+        week = data["archive"][a_idx]
+        
+        if txt == "💰 Фінансовий звіт":
+            store_revenue, total_revenue, total_phones = get_archive_week_financial_report(week)
+            
+            if not store_revenue:
+                bot.send_message(chat_id, "📭 Немає даних за цей тиждень.", reply_markup=archive_view_menu())
+                return
+            
+            report_text = f"💰 <b>Фінансовий звіт за тиждень {week['week']}</b>\n\n"
+            for store, info in store_revenue.items():
+                report_text += f"🏪 <b>{store}</b>:\n"
+                report_text += f"   📱 Телефонів: {info['count']}\n"
+                report_text += f"   💰 Заробіток: {fmt_price(info['revenue'])} грн\n\n"
+            
+            report_text += f"<b>Загалом за тиждень:</b>\n"
+            report_text += f"📱 Телефонів: {total_phones}\n"
+            report_text += f"💰 Загальний заробіток: {fmt_price(total_revenue)} грн"
+            
+            bot.send_message(chat_id, report_text, parse_mode="HTML", reply_markup=archive_view_menu())
+            return
+            
+        if txt == "🔽 Показати телефони":
+            phones = week.get("phones", [])
+            if not phones:
+                bot.send_message(chat_id, "📭 Телефонів в цьому тижні немає.", reply_markup=archive_view_menu())
+                return
+            text = f"📋 <b>Телефони за тиждень {week['week']}:</b>\n\n"
+            for i, p in enumerate(phones, 1):
+                text += (f"{i}. {phone_display(p)}\n\n")
+            bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=archive_view_menu())
+            return
+
+        if txt == "🔼 Відновити тиждень":
+            phones = week.get("phones", [])
+            data["phones"].extend(phones)
+            # видалити тиждень з архіву
+            data["archive"].pop(a_idx)
+            save_data(data)
+            bot.send_message(chat_id, f"✅ Тиждень {week['week']} відновлено повністю в поточний список.", reply_markup=main_menu())
+            clear_state(chat_id)
+            return
+
+        if txt == "📤 Відновити телефон":
+            phones = week.get("phones", [])
+            if not phones:
+                bot.send_message(chat_id, "📭 Телефонів для відновлення немає.", reply_markup=archive_view_menu())
+                return
+            push_state(chat_id, "archive_restore_select")
+            bot.send_message(chat_id, "Оберіть телефон для відновлення:", reply_markup=phones_list_keyboard(phones))
+            return
+
+        if txt == "❌ Видалити телефон з архіву":
+            phones = week.get("phones", [])
+            if not phones:
+                bot.send_message(chat_id, "📭 Телефонів для видалення немає.", reply_markup=archive_view_menu())
+                return
+            push_state(chat_id, "archive_delete_phone_select")
+            bot.send_message(chat_id, "Оберіть телефон, який бажаєте видалити з архіву:", reply_markup=phones_list_keyboard(phones))
+            return
+
+        if txt == "🗑 Видалити тиждень":
+            push_state(chat_id, "archive_delete_confirm")
+            bot.send_message(chat_id, f"Ви дійсно хочете видалити тиждень {week['week']} з архіву? Це незворотньо.", reply_markup=confirm_delete_menu())
+            return
+
+        if txt == "⬅️ Назад":
+            pop_state(chat_id)
+            pop_state(chat_id)
+            bot.send_message(chat_id, "Повертаємось в головне меню.", reply_markup=main_menu())
+            return
+
+        bot.send_message(chat_id, "❌ Оберіть дію з клавіатури.", reply_markup=archive_view_menu())
+        return
+
+    # відновлення одного телефону з архіву
+    if state == "archive_restore_select":
+        a_idx = user_state[chat_id]["tmp"].get("archive_week_index")
+        if a_idx is None or a_idx >= len(data.get("archive", [])):
+            bot.send_message(chat_id, "❌ Помилка: тиждень не знайдено.", reply_markup=main_menu())
+            clear_state(chat_id)
+            return
+        week = data["archive"][a_idx]
+        phones = week.get("phones", [])
+        m = re.match(r'^\s*(\d+)', txt)
+        if m:
+            p_idx = int(m.group(1)) - 1
+            if 0 <= p_idx < len(phones):
+                phone = phones.pop(p_idx)
+                data["phones"].append(phone)
+                # якщо тиждень залишився порожнім - видаляємо його
+                if not phones:
+                    data["archive"].pop(a_idx)
+                save_data(data)
+                bot.send_message(chat_id, f"✅ Телефон відновлено:\n{phone_short(phone)}", reply_markup=main_menu())
+                clear_state(chat_id)
+            else:
+                bot.send_message(chat_id, "❌ Невірний індекс. Оберіть телефон зі списку.", reply_markup=phones_list_keyboard(phones))
+        else:
+            bot.send_message(chat_id, "❌ Оберіть телефон зі списку (натисніть рядок).", reply_markup=phones_list_keyboard(phones))
+        return
+
+    # видалення одного телефону з архіву
+    if state == "archive_delete_phone_select":
+        a_idx = user_state[chat_id]["tmp"].get("archive_week_index")
+        if a_idx is None or a_idx >= len(data.get("archive", [])):
+            bot.send_message(chat_id, "❌ Помилка: тиждень не знайдено.", reply_markup=main_menu())
+            clear_state(chat_id)
+            return
+        week = data["archive"][a_idx]
+        phones = week.get("phones", [])
+        m = re.match(r'^\s*(\d+)', txt)
+        if m:
+            p_idx = int(m.group(1)) - 1
+            if 0 <= p_idx < len(phones):
+                removed = phones.pop(p_idx)
+                # якщо порожній тиждень - видалити його
+                if not phones:
+                    data["archive"].pop(a_idx)
+                save_data(data)
+                bot.send_message(chat_id, f"🗑 Телефон видалено з архіву:\n{phone_short(removed)}", reply_markup=main_menu())
+                clear_state(chat_id)
+            else:
+                bot.send_message(chat_id, "❌ Невірний індекс. Оберіть телефон зі списку.", reply_markup=phones_list_keyboard(phones))
+        else:
+            bot.send_message(chat_id, "❌ Оберіть телефон зі списку (натисніть рядок).", reply_markup=phones_list_keyboard(phones))
+        return
+
+    # підтвердження видалення тижня
+    if state == "archive_delete_confirm":
+        a_idx = user_state[chat_id]["tmp"].get("archive_week_index")
+        if txt == "✅ Так":
+            if a_idx is not None and 0 <= a_idx < len(data.get("archive", [])):
+                removed = data["archive"].pop(a_idx)
+                save_data(data)
+                bot.send_message(chat_id, f"🗑 Тиждень видалено з архіву: {removed['week']}", reply_markup=main_menu())
+            else:
+                bot.send_message(chat_id, "❌ Помилка: тиждень не знайдено.", reply_markup=main_menu())
+            clear_state(chat_id)
+            return
+        elif txt == "❌ Ні":
+            pop_state(chat_id)
+            pop_state(chat_id)
+            bot.send_message(chat_id, "Скасовано.", reply_markup=main_menu())
+            return
+        else:
+            bot.send_message(chat_id, "❌ Оберіть ✅ Так або ❌ Ні.", reply_markup=confirm_delete_menu())
+        return
+
+    # якщо повідомлення не оброблено
+    bot.send_message(chat_id, "Не впізнаю команду або оберіть дію з меню.", reply_markup=main_menu())
 
 # =======================
 # СТАРТ БОТА

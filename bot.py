@@ -16,7 +16,7 @@ bot = TeleBot(TOKEN)
 data_lock = threading.Lock()
 
 # =======================
-# ЗАВАНТАЖЕННЯ / ЗБЕРЕЖЕННЯ ДАНИХ
+# ЗАВАНТАЖЕННЯ / ЗБЕРЕЖЕННЯ
 # =======================
 def load_data():
     with data_lock:
@@ -48,7 +48,7 @@ archive = load_archive()
 # =======================
 # СТАН КОРИСТУВАЧА
 # =======================
-user_state = {}  # chat_id -> {"stack": [], "tmp": {}}
+user_state = {}
 def ensure_state(chat_id):
     if chat_id not in user_state:
         user_state[chat_id] = {"stack": [], "tmp": {}}
@@ -134,6 +134,13 @@ def confirm_delete_menu():
     kb.add("✅ Так", "❌ Ні")
     return kb
 
+def phones_list_keyboard(phones):
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    for i, p in enumerate(phones, 1):
+        kb.add(f"{i}. {phone_short(p)}")
+    kb.add("⬅️ Назад")
+    return kb
+
 def archive_week_menu():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     for w in archive:
@@ -146,13 +153,6 @@ def archive_view_menu():
     kb.add("🔽 Показати телефони", "🔼 Відновити тиждень")
     kb.add("📤 Відновити телефон", "❌ Видалити телефон з архіву")
     kb.add("🗑 Видалити тиждень", "⬅️ Назад")
-    return kb
-
-def phones_list_keyboard(phones):
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    for i, p in enumerate(phones, 1):
-        kb.add(f"{i}. {phone_short(p)}")
-    kb.add("⬅️ Назад")
     return kb
 
 def archive_report_menu():
@@ -177,11 +177,9 @@ def cmd_start(message):
     bot.send_message(chat_id, "Привіт! 👋\nОберіть дію:", reply_markup=main_menu())
 
 # =======================
-# ДОДАВАННЯ, РЕДАГУВАННЯ, АРХІВ
-# (весь твій попередній код сюди)
+# ТУТ ВСТАВ ЛИШЕ ВСІ ФУНКЦІЇ ТВОГО ПОПЕРЕДНЬОГО КОДУ
+# (додавання, редагування, архів, видалення, перенесення тижня)
 # =======================
-# ... вставляємо весь блок додавання/редагування/архіву ...
-# Для стислості не повторюю його повністю, але при інтеграції потрібно скопіювати весь попередній код з твоєї версії
 
 # =======================
 # ЗВІТИ
@@ -204,13 +202,14 @@ def report_handler(message):
         bot.send_message(chat_id, "Повертаємось у головне меню.", reply_markup=main_menu())
         return
 
+    # Обираємо період
     if state == "report_period":
         if txt == "По тижню":
-            push_state(chat_id, "report_week_select")
             if not archive:
                 bot.send_message(chat_id, "📭 Архів порожній.", reply_markup=main_menu())
                 clear_state(chat_id)
                 return
+            push_state(chat_id, "report_week_select")
             kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
             for w in archive:
                 kb.add(w["week"])
@@ -223,6 +222,7 @@ def report_handler(message):
             bot.send_message(chat_id, "❌ Оберіть варіант з меню.", reply_markup=archive_report_menu())
         return
 
+    # Вибір тижня
     if state == "report_week_select":
         weeks = [w["week"] for w in archive]
         if txt not in weeks:
@@ -234,6 +234,7 @@ def report_handler(message):
         bot.send_message(chat_id, "Виберіть формат звіту:", reply_markup=archive_report_type_menu())
         return
 
+    # Вибір місяця
     if state == "report_month_select":
         try:
             month_date = datetime.strptime(txt + "-01", "%Y-%m-%d")
@@ -241,45 +242,42 @@ def report_handler(message):
             push_state(chat_id, "report_type")
             bot.send_message(chat_id, "Виберіть формат звіту:", reply_markup=archive_report_type_menu())
         except:
-            bot.send_message(chat_id, "❌ Невірний формат. Введіть YYYY-MM.", reply_markup=back_button())
+            bot.send_message(chat_id, "❌ Невірний формат. Використайте YYYY-MM.", reply_markup=back_button())
         return
 
+    # Вибір типу звіту
     if state == "report_type":
-        if txt not in ["💰 Суми", "📱 Суми + телефони"]:
-            bot.send_message(chat_id, "❌ Оберіть формат звіту.", reply_markup=archive_report_type_menu())
-            return
+        report_format = txt
+        tmp = user_state[chat_id]["tmp"]
 
-        # по тижню
-        if "report_week_index" in user_state[chat_id]["tmp"]:
-            idx = user_state[chat_id]["tmp"]["report_week_index"]
-            week = archive[idx]
+        # Звіт по тижню
+        if "report_week_index" in tmp:
+            week = archive[tmp["report_week_index"]]
             phones = week.get("phones", [])
-            total = sum(p["price"] for p in phones)
-            text = f"📊 Звіт за {week['week']}:\n💰 Сума: {fmt_price(total)} грн\n"
-            if txt == "📱 Суми + телефони":
-                for i, p in enumerate(phones, 1):
-                    text += f"{i}. {phone_display(p)}\n"
-            bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=main_menu())
+        # Звіт по місяцю
+        elif "report_month" in tmp:
+            month = tmp["report_month"]
+            phones = []
+            for w in archive:
+                for p in w.get("phones", []):
+                    p_date = datetime.strptime(p["date"].split()[0], "%d.%m.%Y")
+                    if p_date.year == month.year and p_date.month == month.month:
+                        phones.append(p)
+        else:
+            bot.send_message(chat_id, "❌ Неможливо сформувати звіт.", reply_markup=main_menu())
             clear_state(chat_id)
             return
 
-        # по місяцю
-        if "report_month" in user_state[chat_id]["tmp"]:
-            month_date = user_state[chat_id]["tmp"]["report_month"]
-            phones_in_month = []
-            for w in archive:
-                for p in w["phones"]:
-                    p_date = datetime.strptime(p["date"][:10], "%d.%m.%Y")
-                    if p_date.year == month_date.year and p_date.month == month_date.month:
-                        phones_in_month.append(p)
-            total = sum(p["price"] for p in phones_in_month)
-            text = f"📊 Звіт за {month_date.strftime('%Y-%m')}:\n💰 Сума: {fmt_price(total)} грн\n"
-            if txt == "📱 Суми + телефони":
-                for i, p in enumerate(phones_in_month, 1):
-                    text += f"{i}. {phone_display(p)}\n"
-            bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=main_menu())
-            clear_state(chat_id)
-            return
+        total = sum(float(p["price"]) for p in phones)
+        text = f"📊 Звіт:\n🔢 Кількість телефонів: {len(phones)}\n💰 Загальна сума: {fmt_price(total)} грн\n\n"
+
+        if report_format == "📱 Суми + телефони":
+            for i, p in enumerate(phones, 1):
+                text += f"{i}. {phone_display(p)}\n\n"
+
+        bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=main_menu())
+        clear_state(chat_id)
+        return
 
 # =======================
 # СТАРТ БОТА

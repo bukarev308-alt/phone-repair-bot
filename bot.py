@@ -36,15 +36,42 @@ def format_kiev_date_short(date=None):
 def load_data():
     with data_lock:
         if not os.path.exists(DATA_FILE):
+            default_data = {"stores": ["It Center", "Леся", "Особисті"], "phones": [], "archive": []}
+            # ФІКС: одразу зберігаємо default data
+            with open(DATA_FILE, "w", encoding="utf-8") as f:
+                json.dump(default_data, f, ensure_ascii=False, indent=2)
+            return default_data
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Помилка завантаження даних: {e}")
             return {"stores": ["It Center", "Леся", "Особисті"], "phones": [], "archive": []}
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
 
 def save_data(d):
     with data_lock:
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False, indent=2)
+        try:
+            # ФІКС: оновлюємо глобальну змінну
+            global data
+            data = d
+            with open(DATA_FILE, "w", encoding="utf-8") as f:
+                json.dump(d, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"Помилка збереження даних: {e}")
 
+# ФІКС: функція для оновлення глобальних даних
+def refresh_data():
+    global data
+    data = load_data()
+
+# ФІКС: функція для безпечного додавання телефонів
+def add_phone_safe(phone_data):
+    global data
+    refresh_data()  # Завантажуємо актуальні дані
+    data["phones"].append(phone_data)
+    save_data(data)
+
+# Завантажуємо дані при старті
 data = load_data()
 
 # =======================
@@ -272,7 +299,14 @@ def phones_list_keyboard(phones):
 def cmd_start(message):
     chat_id = message.chat.id
     clear_state(chat_id)
+    refresh_data()  # ФІКС: оновлюємо дані при старті
     bot.send_message(chat_id, "Привіт! 👋\nОберіть дію:", reply_markup=main_menu())
+
+# ФІКС: Додайте команду для скидання даних (на випадок проблем)
+@bot.message_handler(commands=["refresh"])
+def cmd_refresh(message):
+    refresh_data()
+    bot.send_message(message.chat.id, "✅ Дані оновлено!", reply_markup=main_menu())
 
 # =======================
 # ДОДАВАННЯ ТЕЛЕФОНУ (початок)
@@ -320,6 +354,7 @@ def generic_handler(message):
     # КНОПКИ ГОЛОВНОГО МЕНЮ
     # -----------------------
     if txt == "📋 Переглянути телефони":
+        refresh_data()  # ФІКС: оновлюємо дані
         if not data["phones"]:
             bot.send_message(chat_id, "📭 Телефонів немає.", reply_markup=main_menu())
             return
@@ -330,6 +365,7 @@ def generic_handler(message):
         return
 
     elif txt == "📊 Підсумок":
+        refresh_data()  # ФІКС: оновлюємо дані
         if not data["phones"]:
             bot.send_message(chat_id, "📭 Телефонів немає.", reply_markup=main_menu())
             return
@@ -345,11 +381,13 @@ def generic_handler(message):
         return
 
     elif txt == "🏪 Магазини":
+        refresh_data()  # ФІКС: оновлюємо дані
         text = "🏪 <b>Список магазинів:</b>\n" + "\n".join(f"• {s}" for s in data["stores"])
         bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=main_menu())
         return
 
     elif txt == "🗂 Архів":
+        refresh_data()  # ФІКС: оновлюємо дані
         if not data.get("archive"):
             bot.send_message(chat_id, "📭 Архів порожній.", reply_markup=main_menu())
             return
@@ -359,20 +397,35 @@ def generic_handler(message):
         return
 
     elif txt == "📝 Перенести тиждень в архів":
+        refresh_data()  # ФІКС: оновлюємо дані
         if not data["phones"]:
             bot.send_message(chat_id, "📭 Телефонів немає для архіву.", reply_markup=main_menu())
             return
-        # Використовуємо київський час для форматування дати
-        week_start = format_kiev_date_short()
-        week_end = format_kiev_date_short(get_kiev_time() + timedelta(days=6))
-        week_str = f"{week_start} - {week_end}"
+        
+        # ФІКС: правильний розрахунок початку та кінця тижня
+        today = get_kiev_time()
+        start_of_week = today - timedelta(days=today.weekday())  # Понеділок
+        end_of_week = start_of_week + timedelta(days=6)  # Неділя
+        
+        week_start_str = format_kiev_date_short(start_of_week)
+        week_end_str = format_kiev_date_short(end_of_week)
+        week_str = f"{week_start_str} - {week_end_str}"
+        
+        # ФІКС: перевірка на дублікати
+        existing_weeks = [w["week"] for w in data.get("archive", [])]
+        if week_str in existing_weeks:
+            bot.send_message(chat_id, f"❌ Тиждень {week_str} вже є в архіві!", reply_markup=main_menu())
+            return
+        
+        # ФІКС: створення копії перед очищенням
+        phones_to_archive = data["phones"].copy()
         
         data.setdefault("archive", []).append({
             "week": week_str, 
-            "phones": data["phones"].copy(),
-            "archive_date": format_kiev_date()  # Додаємо дату архівації
+            "phones": phones_to_archive,
+            "archive_date": format_kiev_date()
         })
-        data["phones"].clear()
+        data["phones"] = []  # ФІКС: очищаємо через присвоєння нового списку
         save_data(data)
         bot.send_message(chat_id, f"✅ Телефони перенесено в архів за тиждень {week_str}", reply_markup=main_menu())
         return
@@ -382,6 +435,7 @@ def generic_handler(message):
     # -----------------------
     if state == "financial_reports":
         if txt == "📊 Тижневий фінансовий звіт":
+            refresh_data()  # ФІКС: оновлюємо дані
             if not data["phones"]:
                 bot.send_message(chat_id, "📭 Телефонів за тиждень немає.", reply_markup=financial_reports_menu())
                 return
@@ -406,6 +460,7 @@ def generic_handler(message):
             return
 
         elif txt == "📈 Місячний фінансовий звіт":
+            refresh_data()  # ФІКС: оновлюємо дані
             store_revenue, total_revenue, total_phones = get_monthly_financial_report()
             
             if not store_revenue:
@@ -426,6 +481,7 @@ def generic_handler(message):
             return
 
         elif txt == "🏪 Звіт по магазинах":
+            refresh_data()  # ФІКС: оновлюємо дані
             if not data.get("archive") and not data["phones"]:
                 bot.send_message(chat_id, "📭 Немає даних для аналізу.", reply_markup=financial_reports_menu())
                 return
@@ -549,11 +605,12 @@ def generic_handler(message):
                 "price": price,
                 "date": format_kiev_date()  # Використовуємо київський час
             }
-            data["phones"].append(phone)
-            save_data(data)
+            # ФІКС: використовуємо безпечне додавання
+            add_phone_safe(phone)
             bot.send_message(chat_id, "✅ Телефон додано!", reply_markup=main_menu())
             clear_state(chat_id)
-        except Exception:
+        except Exception as e:
+            print(f"Помилка додавання телефону: {e}")
             bot.send_message(chat_id, "❌ Введіть правильне число (наприклад: 450.50).", reply_markup=back_button())
         return
 

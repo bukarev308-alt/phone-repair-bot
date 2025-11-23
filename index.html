@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phone Repair Manager</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 15px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 10px;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-success {
+            background: #48bb78;
+            color: white;
+        }
+
+        .btn-danger {
+            background: #f56565;
+            color: white;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #4a5568;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .stat-item {
+            text-align: center;
+            padding: 15px;
+            background: #f7fafc;
+            border-radius: 10px;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #718096;
+            margin-top: 5px;
+        }
+
+        .phone-item {
+            padding: 15px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .phone-item:last-child {
+            border-bottom: none;
+        }
+
+        .phone-model {
+            font-weight: bold;
+            color: #2d3748;
+        }
+
+        .phone-store {
+            color: #667eea;
+            font-size: 14px;
+        }
+
+        .phone-price {
+            color: #48bb78;
+            font-weight: bold;
+            float: right;
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Головна панель -->
+        <div id="mainScreen">
+            <div class="header">
+                <h1>📱 Phone Repair</h1>
+                <p>Управління ремонтами</p>
+            </div>
+
+            <div class="card">
+                <button class="btn btn-primary" onclick="showAddPhoneForm()">➕ Додати телефон</button>
+                <button class="btn btn-success" onclick="showPhonesList()">📋 Список телефонів</button>
+                <button class="btn btn-primary" onclick="showStats()">📊 Статистика</button>
+            </div>
+
+            <!-- Статистика -->
+            <div class="card">
+                <div class="stats">
+                    <div class="stat-item">
+                        <div class="stat-value" id="todayIncome">0</div>
+                        <div class="stat-label">💰 Сьогодні</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="activePhones">0</div>
+                        <div class="stat-label">📱 Активні</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="weekIncome">0</div>
+                        <div class="stat-label">📅 Тиждень</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="totalPhones">0</div>
+                        <div class="stat-label">🏪 Всього</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Форма додавання телефону -->
+        <div id="addPhoneScreen" class="hidden">
+            <div class="header">
+                <h1>➕ Новий телефон</h1>
+            </div>
+
+            <div class="card">
+                <div class="form-group">
+                    <label>Модель телефону</label>
+                    <input type="text" class="form-control" id="model" placeholder="Наприклад: iPhone 15 Pro">
+                </div>
+
+                <div class="form-group">
+                    <label>Магазин</label>
+                    <select class="form-control" id="store">
+                        <option value="It Center">It Center</option>
+                        <option value="Леся">Леся</option>
+                        <option value="Особисті">Особисті</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Проблема</label>
+                    <textarea class="form-control" id="problem" rows="3" placeholder="Опишіть проблему..."></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label>Ціна ремонту (грн)</label>
+                    <input type="number" class="form-control" id="price" placeholder="0">
+                </div>
+
+                <button class="btn btn-success" onclick="addPhone()">💾 Зберегти</button>
+                <button class="btn btn-danger" onclick="showMainScreen()">❌ Скасувати</button>
+            </div>
+        </div>
+
+        <!-- Список телефонів -->
+        <div id="phonesScreen" class="hidden">
+            <div class="header">
+                <h1>📋 Список телефонів</h1>
+            </div>
+
+            <div class="card">
+                <div id="phonesList">
+                    <!-- Тут будуть телефони -->
+                </div>
+                <button class="btn btn-primary" onclick="showMainScreen()">⬅️ Назад</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Ініціалізація Telegram Web App
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        tg.enableClosingConfirmation();
+
+        // Дані (тимчасово)
+        let phones = [];
+
+        // Екрани
+        function showMainScreen() {
+            document.getElementById('mainScreen').classList.remove('hidden');
+            document.getElementById('addPhoneScreen').classList.add('hidden');
+            document.getElementById('phonesScreen').classList.add('hidden');
+            loadStats();
+        }
+
+        function showAddPhoneForm() {
+            document.getElementById('mainScreen').classList.add('hidden');
+            document.getElementById('addPhoneScreen').classList.remove('hidden');
+            document.getElementById('phonesScreen').classList.add('hidden');
+        }
+
+        function showPhonesList() {
+            document.getElementById('mainScreen').classList.add('hidden');
+            document.getElementById('addPhoneScreen').classList.add('hidden');
+            document.getElementById('phonesScreen').classList.remove('hidden');
+            loadPhonesList();
+        }
+
+        // Завантаження статистики
+        function loadStats() {
+            // Тимчасові дані для демонстрації
+            document.getElementById('todayIncome').textContent = '1,250';
+            document.getElementById('activePhones').textContent = '8';
+            document.getElementById('weekIncome').textContent = '8,450';
+            document.getElementById('totalPhones').textContent = '24';
+        }
+
+        // Додавання телефону
+        function addPhone() {
+            const model = document.getElementById('model').value;
+            const store = document.getElementById('store').value;
+            const problem = document.getElementById('problem').value;
+            const price = document.getElementById('price').value;
+
+            if (!model || !problem || !price) {
+                alert('Будь ласка, заповніть всі поля!');
+                return;
+            }
+
+            const phoneData = {
+                model: model,
+                store: store,
+                problem: problem,
+                price: parseFloat(price),
+                date: new Date().toLocaleString('uk-UA')
+            };
+
+            // Надсилаємо дані в бота
+            tg.sendData(JSON.stringify({
+                action: 'add_phone',
+                data: phoneData
+            }));
+
+            // Очищаємо форму
+            document.getElementById('model').value = '';
+            document.getElementById('problem').value = '';
+            document.getElementById('price').value = '';
+
+            alert('✅ Телефон додано!');
+            showMainScreen();
+        }
+
+        // Завантаження списку телефонів
+        function loadPhonesList() {
+            const phonesList = document.getElementById('phonesList');
+            
+            // Тимчасові дані для демонстрації
+            const demoPhones = [
+                { model: 'iPhone 15 Pro', store: 'It Center', problem: 'Розбитий екран', price: 2500 },
+                { model: 'Samsung S24', store: 'Леся', problem: 'Не працює динамік', price: 800 },
+                { model: 'Xiaomi Redmi 13', store: 'Особисті', problem: 'Заміна батареї', price: 1200 }
+            ];
+
+            phonesList.innerHTML = demoPhones.map(phone => `
+                <div class="phone-item">
+                    <div class="phone-model">${phone.model}</div>
+                    <div class="phone-store">${phone.store}</div>
+                    <div class="phone-price">${phone.price} грн</div>
+                    <div style="clear: both;"></div>
+                    <div style="font-size: 12px; color: #666; margin-top: 5px;">${phone.problem}</div>
+                </div>
+            `).join('');
+
+            if (demoPhones.length === 0) {
+                phonesList.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">📭 Телефонів немає</div>';
+            }
+        }
+
+        // Слухаємо повідомлення від бота
+        tg.onEvent('viewportChanged', () => {
+            tg.expand();
+        });
+
+        // Показуємо головний екран при завантаженні
+        showMainScreen();
+    </script>
+</body>
+</html>
